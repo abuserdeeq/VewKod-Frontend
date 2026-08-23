@@ -1,5 +1,5 @@
 // Replace with your deployed Render backend URL
-const API_BASE_URL = "https://your-vewkod-backend.onrender.com";
+const API_BASE_URL = "https://vewkod.onrender.com";
 
 export async function explainCode(code, difficulty) {
   const response = await fetch(`${API_BASE_URL}/explain`, {
