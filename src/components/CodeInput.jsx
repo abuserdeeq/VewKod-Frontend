@@ -13,11 +13,9 @@ import {
 
 // PrismJS - Import in CORRECT dependency order
 import Prism from "prismjs";
-// Core dependencies FIRST
-import "prismjs/components/prism-markup";      // HTML/XML - dependency for many
-import "prismjs/components/prism-clike";       // C-like base - needed for JS, Java, C, C++, C#, etc.
-import "prismjs/components/prism-css";         // CSS
-// Then individual languages
+import "prismjs/components/prism-markup";
+import "prismjs/components/prism-clike";
+import "prismjs/components/prism-css";
 import "prismjs/components/prism-javascript";
 import "prismjs/components/prism-typescript";
 import "prismjs/components/prism-python";
@@ -78,7 +76,6 @@ export default function CodeInput({ onExplain, loading }) {
       } catch (err) {
         console.warn("Prism highlight error:", err);
       }
-      // Fallback: return plain text with HTML escaping if highlighting fails
       return codeText
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
@@ -91,7 +88,6 @@ export default function CodeInput({ onExplain, loading }) {
     setLineCount(code.split("\n").length || 1);
   }, [code]);
 
-  // Keyboard shortcut: Ctrl+Enter
   useEffect(() => {
     const handleKeyDown = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
@@ -120,7 +116,6 @@ export default function CodeInput({ onExplain, loading }) {
 
   const charCount = code.length;
   const isNearLimit = charCount > MAX_CHARS * 0.9;
-
   const currentLang = LANGUAGES.find((l) => l.id === language);
 
   return (
@@ -136,11 +131,11 @@ export default function CodeInput({ onExplain, loading }) {
         <div className="relative">
           <button
             onClick={() => setShowLangDropdown(!showLangDropdown)}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#1a1a2e] border border-purple-900/30 text-sm text-gray-300 hover:border-purple-500/50 transition-colors"
+            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#1e293b] border border-slate-700/40 text-sm text-slate-300 hover:border-blue-500/50 transition-colors"
           >
             <span>{currentLang?.icon}</span>
             <span className="hidden sm:inline">{currentLang?.name}</span>
-            <ChevronDown className="w-3.5 h-3.5 text-gray-500" />
+            <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
           </button>
 
           <AnimatePresence>
@@ -150,7 +145,7 @@ export default function CodeInput({ onExplain, loading }) {
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: -5, scale: 0.95 }}
                 transition={{ duration: 0.15 }}
-                className="absolute top-full left-0 mt-2 w-56 max-h-72 overflow-y-auto rounded-xl bg-[#1a1a2e] border border-purple-900/30 shadow-xl z-30"
+                className="absolute top-full left-0 mt-2 w-56 max-h-72 overflow-y-auto rounded-xl bg-[#1e293b] border border-slate-700/40 shadow-xl z-30"
               >
                 {LANGUAGES.map((lang) => (
                   <button
@@ -161,8 +156,8 @@ export default function CodeInput({ onExplain, loading }) {
                     }}
                     className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm transition-colors ${
                       language === lang.id
-                        ? "bg-purple-500/20 text-purple-300"
-                        : "text-gray-400 hover:bg-purple-500/10 hover:text-gray-200"
+                        ? "bg-blue-500/20 text-blue-300"
+                        : "text-slate-400 hover:bg-blue-500/10 hover:text-slate-200"
                     }`}
                   >
                     <span className="w-5 text-center">{lang.icon}</span>
@@ -175,15 +170,15 @@ export default function CodeInput({ onExplain, loading }) {
         </div>
 
         {/* Difficulty Selector */}
-        <div className="flex rounded-lg bg-[#1a1a2e] border border-purple-900/30 p-0.5">
+        <div className="flex rounded-lg bg-[#1e293b] border border-slate-700/40 p-0.5">
           {["beginner", "intermediate", "advanced"].map((level) => (
             <button
               key={level}
               onClick={() => setDifficulty(level)}
               className={`px-3 py-1.5 rounded-md text-xs capitalize transition-all ${
                 difficulty === level
-                  ? "bg-purple-600 text-white shadow-lg shadow-purple-500/25"
-                  : "text-gray-400 hover:text-gray-200"
+                  ? "bg-blue-600 text-white shadow-lg shadow-blue-500/25"
+                  : "text-slate-400 hover:text-slate-200"
               }`}
             >
               {level}
@@ -194,7 +189,7 @@ export default function CodeInput({ onExplain, loading }) {
         {/* Example Snippets Toggle */}
         <button
           onClick={() => setShowExamples(!showExamples)}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#1a1a2e] border border-purple-900/30 text-sm text-gray-400 hover:text-gray-200 hover:border-purple-500/30 transition-colors"
+          className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#1e293b] border border-slate-700/40 text-sm text-slate-400 hover:text-slate-200 hover:border-blue-500/30 transition-colors"
         >
           <BookOpen className="w-3.5 h-3.5" />
           <span className="hidden sm:inline">Examples</span>
@@ -204,15 +199,11 @@ export default function CodeInput({ onExplain, loading }) {
 
         {/* Character Counter */}
         <div className="flex items-center gap-2 text-xs">
-          <span
-            className={`${
-              isNearLimit ? "text-amber-400" : "text-gray-500"
-            }`}
-          >
+          <span className={isNearLimit ? "text-amber-400" : "text-slate-500"}>
             {charCount.toLocaleString()}
           </span>
-          <span className="text-gray-600">/</span>
-          <span className="text-gray-600">{MAX_CHARS.toLocaleString()}</span>
+          <span className="text-slate-600">/</span>
+          <span className="text-slate-600">{MAX_CHARS.toLocaleString()}</span>
         </div>
       </div>
 
@@ -225,25 +216,25 @@ export default function CodeInput({ onExplain, loading }) {
             exit={{ opacity: 0, height: 0 }}
             className="overflow-hidden"
           >
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3 rounded-xl bg-[#1a1a2e] border border-purple-900/20">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3 rounded-xl bg-[#1e293b] border border-slate-700/30">
               {EXAMPLE_SNIPPETS.map((snippet) => (
                 <button
                   key={snippet.id}
                   onClick={() => handleExampleClick(snippet)}
-                  className="flex items-center gap-3 p-3 rounded-lg bg-[#151521] border border-purple-900/10 hover:border-purple-500/30 hover:bg-[#1e1e2e] transition-all text-left group"
+                  className="flex items-center gap-3 p-3 rounded-lg bg-[#0f172a] border border-slate-700/20 hover:border-blue-500/30 hover:bg-[#1e293b] transition-all text-left group"
                 >
-                  <div className="w-8 h-8 rounded-lg bg-purple-500/10 flex items-center justify-center group-hover:bg-purple-500/20 transition-colors">
-                    <Code2 className="w-4 h-4 text-purple-400" />
+                  <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center group-hover:bg-blue-500/20 transition-colors">
+                    <Code2 className="w-4 h-4 text-blue-400" />
                   </div>
                   <div>
-                    <p className="text-sm text-gray-200 font-medium">
+                    <p className="text-sm text-slate-200 font-medium">
                       {snippet.name}
                     </p>
-                    <p className="text-xs text-gray-500 capitalize">
+                    <p className="text-xs text-slate-500 capitalize">
                       {snippet.language}
                     </p>
                   </div>
-                  <Zap className="w-3.5 h-3.5 text-gray-600 ml-auto group-hover:text-purple-400 transition-colors" />
+                  <Zap className="w-3.5 h-3.5 text-slate-600 ml-auto group-hover:text-blue-400 transition-colors" />
                 </button>
               ))}
             </div>
@@ -252,16 +243,16 @@ export default function CodeInput({ onExplain, loading }) {
       </AnimatePresence>
 
       {/* Editor Container */}
-      <div className="relative rounded-xl bg-[#151521] border border-purple-900/30 overflow-hidden focus-within:border-purple-500/50 focus-within:shadow-[0_0_30px_-5px_rgba(168,85,247,0.2)] transition-all">
+      <div className="relative rounded-xl bg-[#1e293b] border border-slate-700/40 overflow-hidden focus-within:border-blue-500/50 focus-within:shadow-[0_0_30px_-5px_rgba(59,130,246,0.2)] transition-all">
         {/* Editor Header */}
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-purple-900/20 bg-[#12121f]">
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-700/30 bg-[#0f172a]">
           <div className="flex items-center gap-2">
             <div className="flex gap-1.5">
               <div className="w-2.5 h-2.5 rounded-full bg-red-500/80" />
               <div className="w-2.5 h-2.5 rounded-full bg-amber-500/80" />
               <div className="w-2.5 h-2.5 rounded-full bg-emerald-500/80" />
             </div>
-            <span className="text-xs text-gray-600 ml-2 font-mono">
+            <span className="text-xs text-slate-600 ml-2 font-mono">
               {currentLang?.name.toLowerCase() || "code"}
               {lineCount > 1 ? ` \u2022 ${lineCount} lines` : ` \u2022 ${lineCount} line`}
             </span>
@@ -269,7 +260,7 @@ export default function CodeInput({ onExplain, loading }) {
           {code && (
             <button
               onClick={handleClear}
-              className="flex items-center gap-1 text-xs text-gray-500 hover:text-red-400 transition-colors"
+              className="flex items-center gap-1 text-xs text-slate-500 hover:text-red-400 transition-colors"
             >
               <Trash2 className="w-3 h-3" />
               Clear
@@ -305,11 +296,11 @@ export default function CodeInput({ onExplain, loading }) {
 
       {/* Action Bar */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 text-xs text-gray-500">
+        <div className="flex items-center gap-2 text-xs text-slate-500">
           <Keyboard className="w-3.5 h-3.5" />
           <span>
-            Press <kbd className="px-1.5 py-0.5 rounded bg-[#1a1a2e] border border-purple-900/30 text-gray-400">Ctrl</kbd>{" "}
-            <kbd className="px-1.5 py-0.5 rounded bg-[#1a1a2e] border border-purple-900/30 text-gray-400">Enter</kbd> to explain
+            Press <kbd className="px-1.5 py-0.5 rounded bg-[#1e293b] border border-slate-700/40 text-slate-400">Ctrl</kbd>{" "}
+            <kbd className="px-1.5 py-0.5 rounded bg-[#1e293b] border border-slate-700/40 text-slate-400">Enter</kbd> to explain
           </span>
         </div>
 
@@ -318,7 +309,7 @@ export default function CodeInput({ onExplain, loading }) {
           disabled={loading || !code.trim()}
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
-          className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-fuchsia-600 hover:from-purple-500 hover:to-fuchsia-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium text-sm transition-all shadow-lg shadow-purple-500/25 btn-shine"
+          className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium text-sm transition-all shadow-lg shadow-blue-500/25 btn-shine"
         >
           <Play className="w-4 h-4" />
           {loading ? "Analyzing..." : "Explain This Code"}

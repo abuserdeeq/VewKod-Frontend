@@ -27,13 +27,13 @@ export default function Toast({ message, type = "success", onClose, duration = 3
         animate={{ opacity: 1, x: 0, scale: 1 }}
         exit={{ opacity: 0, x: 100, scale: 0.9 }}
         transition={{ type: "spring", stiffness: 300, damping: 25 }}
-        className={`fixed top-6 right-6 z-50 flex items-center gap-3 px-4 py-3 rounded-xl bg-[#151521] border ${borders[type]} shadow-lg backdrop-blur-sm`}
+        className={`fixed top-6 right-6 z-50 flex items-center gap-3 px-4 py-3 rounded-xl bg-[#1e293b] border ${borders[type]} shadow-lg backdrop-blur-sm`}
       >
         {icons[type]}
-        <span className="text-sm text-gray-200">{message}</span>
+        <span className="text-sm text-slate-200">{message}</span>
         <button
           onClick={onClose}
-          className="ml-2 text-gray-500 hover:text-white transition-colors"
+          className="ml-2 text-slate-500 hover:text-white transition-colors"
         >
           <X className="w-3.5 h-3.5" />
         </button>

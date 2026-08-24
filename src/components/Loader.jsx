@@ -12,7 +12,7 @@ export default function Loader() {
         {[0, 1, 2].map((i) => (
           <motion.div
             key={i}
-            className="w-3 h-3 rounded-full bg-purple-500"
+            className="w-3 h-3 rounded-full bg-blue-500"
             animate={{
               scale: [1, 1.3, 1],
               opacity: [0.5, 1, 0.5],
@@ -29,7 +29,7 @@ export default function Loader() {
       <motion.p
         animate={{ opacity: [0.5, 1, 0.5] }}
         transition={{ duration: 2, repeat: Infinity }}
-        className="text-sm text-purple-300/70 font-medium"
+        className="text-sm text-blue-300/70 font-medium"
       >
         Analyzing your code...
       </motion.p>
