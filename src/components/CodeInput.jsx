@@ -7,7 +7,6 @@ import {
   ChevronDown,
   Zap,
   BookOpen,
-  Keyboard,
   Code2,
 } from "lucide-react";
 
@@ -125,85 +124,87 @@ export default function CodeInput({ onExplain, loading }) {
       transition={{ duration: 0.5, delay: 0.1 }}
       className="w-full max-w-3xl mx-auto flex flex-col gap-4"
     >
-      {/* Toolbar */}
-      <div className="flex flex-wrap items-center gap-3">
-        {/* Language Selector */}
-        <div className="relative">
-          <button
-            onClick={() => setShowLangDropdown(!showLangDropdown)}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#1e293b] border border-slate-700/40 text-sm text-slate-300 hover:border-blue-500/50 transition-colors"
-          >
-            <span>{currentLang?.icon}</span>
-            <span>{currentLang?.name}</span>
-            <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
-          </button>
-
-          <AnimatePresence>
-            {showLangDropdown && (
-              <motion.div
-                initial={{ opacity: 0, y: -5, scale: 0.95 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: -5, scale: 0.95 }}
-                transition={{ duration: 0.15 }}
-                className="absolute top-full left-0 mt-2 w-56 max-h-72 overflow-y-auto rounded-xl bg-[#1e293b] border border-slate-700/40 shadow-xl z-30"
-              >
-                {LANGUAGES.map((lang) => (
-                  <button
-                    key={lang.id}
-                    onClick={() => {
-                      setLanguage(lang.id);
-                      setShowLangDropdown(false);
-                    }}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm transition-colors ${
-                      language === lang.id
-                        ? "bg-blue-500/20 text-blue-300"
-                        : "text-slate-400 hover:bg-blue-500/10 hover:text-slate-200"
-                    }`}
-                  >
-                    <span className="w-5 text-center">{lang.icon}</span>
-                    {lang.name}
-                  </button>
-                ))}
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-
-        {/* Difficulty Selector */}
-        <div className="flex rounded-lg bg-[#1e293b] border border-slate-700/40 p-0.5">
-          {["beginner", "intermediate", "advanced"].map((level) => (
+      {/* Toolbar - Row 1: Language + Examples */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          {/* Language Selector */}
+          <div className="relative">
             <button
-              key={level}
-              onClick={() => setDifficulty(level)}
-              className={`px-3 py-1.5 rounded-md text-xs capitalize transition-all ${
-                difficulty === level
-                  ? "bg-blue-600 text-white shadow-lg shadow-blue-500/25"
-                  : "text-slate-400 hover:text-slate-200"
-              }`}
+              onClick={() => setShowLangDropdown(!showLangDropdown)}
+              className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-[#1e293b] border border-slate-700/40 text-xs text-slate-300 hover:border-blue-500/50 transition-colors"
             >
-              {level}
+              <span>{currentLang?.icon}</span>
+              <span>{currentLang?.name}</span>
+              <ChevronDown className="w-3 h-3 text-slate-500" />
             </button>
-          ))}
+
+            <AnimatePresence>
+              {showLangDropdown && (
+                <motion.div
+                  initial={{ opacity: 0, y: -5, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -5, scale: 0.95 }}
+                  transition={{ duration: 0.15 }}
+                  className="absolute top-full left-0 mt-2 w-56 max-h-72 overflow-y-auto rounded-xl bg-[#1e293b] border border-slate-700/40 shadow-xl z-30"
+                >
+                  {LANGUAGES.map((lang) => (
+                    <button
+                      key={lang.id}
+                      onClick={() => {
+                        setLanguage(lang.id);
+                        setShowLangDropdown(false);
+                      }}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm transition-colors ${
+                        language === lang.id
+                          ? "bg-blue-500/20 text-blue-300"
+                          : "text-slate-400 hover:bg-blue-500/10 hover:text-slate-200"
+                      }`}
+                    >
+                      <span className="w-5 text-center">{lang.icon}</span>
+                      {lang.name}
+                    </button>
+                  ))}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
+          {/* Example Snippets Toggle */}
+          <button
+            onClick={() => setShowExamples(!showExamples)}
+            className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-[#1e293b] border border-slate-700/40 text-xs text-slate-400 hover:text-slate-200 hover:border-blue-500/30 transition-colors"
+          >
+            <BookOpen className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Examples</span>
+          </button>
         </div>
-
-        {/* Example Snippets Toggle */}
-        <button
-          onClick={() => setShowExamples(!showExamples)}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#1e293b] border border-slate-700/40 text-sm text-slate-400 hover:text-slate-200 hover:border-blue-500/30 transition-colors"
-        >
-          <BookOpen className="w-3.5 h-3.5" />
-          <span>Examples</span>
-        </button>
-
-        <div className="flex-1" />
 
         {/* Character Counter */}
-        <div className="flex items-center gap-2 text-xs">
+        <div className="flex items-center gap-1.5 text-xs">
           <span className={isNearLimit ? "text-amber-400" : "text-slate-500"}>
             {charCount.toLocaleString()}
           </span>
           <span className="text-slate-600">/</span>
           <span className="text-slate-600">{MAX_CHARS.toLocaleString()}</span>
+        </div>
+      </div>
+
+      {/* Toolbar - Row 2: Difficulty */}
+      <div className="flex">
+        <div className="flex rounded-lg bg-[#1e293b] border border-slate-700/40 p-0.5">
+          {["beginner", "intermediate", "advanced"].map((level) => (
+            <button
+              key={level}
+              onClick={() => setDifficulty(level)}
+              className={`px-3 sm:px-4 py-1.5 rounded-md text-[10px] sm:text-xs capitalize transition-all ${
+                difficulty === level
+                  ? "bg-blue-600 text-white shadow-lg shadow-blue-500/25"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              <span>{level}</span>
+            </button>
+          ))}
         </div>
       </div>
 
@@ -295,15 +296,7 @@ export default function CodeInput({ onExplain, loading }) {
       </div>
 
       {/* Action Bar */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 text-xs text-slate-500">
-          <Keyboard className="w-3.5 h-3.5" />
-          <span>
-            Press <kbd className="px-1.5 py-0.5 rounded bg-[#1e293b] border border-slate-700/40 text-slate-400">Ctrl</kbd>{" "}
-            <kbd className="px-1.5 py-0.5 rounded bg-[#1e293b] border border-slate-700/40 text-slate-400">Enter</kbd> to explain
-          </span>
-        </div>
-
+      <div className="flex justify-end">
         <motion.button
           onClick={handleSubmit}
           disabled={loading || !code.trim()}
