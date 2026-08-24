@@ -15,7 +15,6 @@ export default function App() {
   const [error, setError] = useState("");
   const [toast, setToast] = useState(null);
 
-  // Persist last explanation in localStorage
   const [lastExplanation, setLastExplanation] = useLocalStorage("vewkod_last_explanation", null);
 
   const showToast = useCallback((message, type = "success") => {
@@ -58,12 +57,12 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0a0a12] flex flex-col relative overflow-hidden">
+    <div className="min-h-screen bg-[#0f172a] flex flex-col relative overflow-hidden">
       {/* Animated Background Blobs */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden">
-        <div className="absolute -top-40 -left-40 w-96 h-96 bg-purple-600/10 rounded-full blur-3xl animate-float" />
-        <div className="absolute top-1/2 -right-40 w-80 h-80 bg-fuchsia-600/10 rounded-full blur-3xl animate-float-delayed" />
-        <div className="absolute -bottom-40 left-1/3 w-72 h-72 bg-purple-800/10 rounded-full blur-3xl animate-pulse-glow" />
+        <div className="absolute -top-40 -left-40 w-96 h-96 bg-blue-600/10 rounded-full blur-3xl animate-float" />
+        <div className="absolute top-1/2 -right-40 w-80 h-80 bg-cyan-600/10 rounded-full blur-3xl animate-float-delayed" />
+        <div className="absolute -bottom-40 left-1/3 w-72 h-72 bg-blue-800/10 rounded-full blur-3xl animate-pulse-glow" />
       </div>
 
       <Header />
@@ -81,21 +80,18 @@ export default function App() {
               Understand Any{" "}
               <span className="gradient-text">Code</span> Instantly
             </h2>
-            <p className="text-gray-400 text-sm sm:text-base max-w-lg mx-auto">
+            <p className="text-slate-400 text-sm sm:text-base max-w-lg mx-auto">
               Paste your code, select your level, and get AI-powered
               explanations in seconds.
             </p>
           </motion.div>
 
-          {/* Code Input */}
           <CodeInput onExplain={handleExplain} loading={loading} />
 
-          {/* Loading State */}
           <AnimatePresence>
             {loading && <Loader />}
           </AnimatePresence>
 
-          {/* Error State */}
           <AnimatePresence>
             {error && (
               <motion.div
@@ -124,14 +120,12 @@ export default function App() {
             )}
           </AnimatePresence>
 
-          {/* Result */}
           <AnimatePresence>
             {result && (
               <ResultDisplay result={result} source={resultSource} />
             )}
           </AnimatePresence>
 
-          {/* Empty State / Features */}
           {!result && !loading && (
             <motion.div
               initial={{ opacity: 0 }}
@@ -161,13 +155,13 @@ export default function App() {
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.6 + i * 0.1 }}
-                  className="p-4 rounded-xl bg-[#151521]/50 border border-purple-900/20 text-center"
+                  className="p-4 rounded-xl bg-[#1e293b]/50 border border-slate-700/30 text-center"
                 >
                   <div className="text-2xl mb-2">{feature.icon}</div>
-                  <h3 className="text-sm font-semibold text-gray-200 mb-1">
+                  <h3 className="text-sm font-semibold text-slate-200 mb-1">
                     {feature.title}
                   </h3>
-                  <p className="text-xs text-gray-500">{feature.desc}</p>
+                  <p className="text-xs text-slate-500">{feature.desc}</p>
                 </motion.div>
               ))}
             </motion.div>
@@ -175,24 +169,22 @@ export default function App() {
         </div>
       </main>
 
-      {/* Footer */}
       <motion.footer
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ delay: 1 }}
-        className="w-full py-6 px-4 border-t border-purple-900/20 relative z-10"
+        className="w-full py-6 px-4 border-t border-slate-700/30 relative z-10"
       >
-        <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-gray-600">
+        <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-slate-600">
           <p> Vewkod. Built with React & Tailwind CSS.</p>
           <p className="flex items-center gap-1">
             Made with
-            <span className="text-purple-500">♥</span>
+            <span className="text-blue-500">♥</span>
             for developers
           </p>
         </div>
       </motion.footer>
 
-      {/* Toast */}
       <AnimatePresence>
         {toast && (
           <Toast
