@@ -134,7 +134,7 @@ export default function CodeInput({ onExplain, loading }) {
             className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#1e293b] border border-slate-700/40 text-sm text-slate-300 hover:border-blue-500/50 transition-colors"
           >
             <span>{currentLang?.icon}</span>
-            <span className="hidden sm:inline">{currentLang?.name}</span>
+            <span>{currentLang?.name}</span>
             <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
           </button>
 
@@ -192,7 +192,7 @@ export default function CodeInput({ onExplain, loading }) {
           className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#1e293b] border border-slate-700/40 text-sm text-slate-400 hover:text-slate-200 hover:border-blue-500/30 transition-colors"
         >
           <BookOpen className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">Examples</span>
+          <span>Examples</span>
         </button>
 
         <div className="flex-1" />
