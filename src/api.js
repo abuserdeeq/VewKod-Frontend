@@ -242,107 +242,547 @@ function analyzeStructure(code, language) {
 function explainLine(line, language) {
   const trimmed = line.trim();
 
-  if (!trimmed) {
-    return null;
-  }
+  if (!trimmed) return null;
+
+  // ----------------------------------------------------------
+  // Comments
+  // ----------------------------------------------------------
 
   if (
     trimmed.startsWith("//") ||
     trimmed.startsWith("#") ||
     trimmed.startsWith("/*") ||
-    trimmed.startsWith("*")
+    trimmed.startsWith("*") ||
+    trimmed.startsWith("<!--")
   ) {
-    return "Comment — this line provides information for developers and is not normally executed.";
+    return "This is a comment. It provides information for developers and is not normally executed.";
   }
 
-  if (/^import\b|^from\b|^#include\b/.test(trimmed)) {
-    return "Imports a library, module, or dependency so its functionality can be used by the program.";
-  }
-
-  if (/^def\s+\w+\s*\(/.test(trimmed)) {
-    const match = trimmed.match(/^def\s+(\w+)\s*\(([^)]*)\)/);
-
-    if (match) {
-      const params = match[2].trim();
-
-      return params
-        ? `Defines the function \`${match[1]}\`, which accepts ${params} as input parameter(s).`
-        : `Defines the function \`${match[1]}\`.`;
-    }
-  }
-
-  if (/^(async\s+)?function\s+\w+\s*\(/.test(trimmed)) {
-    const match = trimmed.match(
-      /^(?:async\s+)?function\s+(\w+)\s*\(([^)]*)\)/
-    );
-
-    if (match) {
-      return `Defines the function \`${match[1]}\`, which can be reused to perform a specific task.`;
-    }
-  }
-
-  if (/^(for|while)\b/.test(trimmed) || /\bfor\s*\(/.test(trimmed)) {
-    return "Starts a loop that repeatedly executes code while its iteration condition is satisfied.";
-  }
-
-  if (/^if\b/.test(trimmed) || /\bif\s*\(/.test(trimmed)) {
-    return "Checks a condition and executes the related code when that condition is true.";
-  }
-
-  if (/^(elif|else if)\b/.test(trimmed)) {
-    return "Checks an alternative condition when the previous condition was not satisfied.";
-  }
-
-  if (/^else\b/.test(trimmed)) {
-    return "Defines the alternative block that runs when the preceding condition is false.";
-  }
-
-  if (/^return\b/.test(trimmed)) {
-    const value = trimmed.replace(/^return\s+/, "").replace(/;$/, "");
-
-    return value
-      ? `Returns \`${value}\` from the current function.`
-      : "Returns control from the current function.";
-  }
+  // ----------------------------------------------------------
+  // Imports
+  // ----------------------------------------------------------
 
   if (
-    /\bprint\s*\(/.test(trimmed) ||
-    /\bconsole\.log\s*\(/.test(trimmed) ||
-    /\bprintf\s*\(/.test(trimmed)
+    /^import\s+/.test(trimmed) ||
+    /^from\s+.+\s+import\s+/.test(trimmed) ||
+    /^#include\s*</.test(trimmed) ||
+    /^require\s*\(/.test(trimmed)
   ) {
-    return "Outputs information to the console or standard output.";
+    return "Imports a library, module, or dependency so functionality from another part of the project can be used.";
   }
 
-  const assignment = trimmed.match(
-    /^(?:const|let|var)?\s*([A-Za-z_]\w*)\s*=\s*(.+?);?$/
+  // ----------------------------------------------------------
+  // Python function
+  // ----------------------------------------------------------
+
+  const pythonFunction = trimmed.match(
+    /^def\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/
   );
 
-  if (assignment) {
-    const variable = assignment[1];
-    const value = assignment[2];
+  if (pythonFunction) {
+    const name = pythonFunction[1];
+    const params = pythonFunction[2].trim();
 
-    return `Assigns \`${value}\` to the variable \`${variable}\`.`;
+    return params
+      ? `Defines the Python function \`${name}\`, which accepts \`${params}\` as parameter(s).`
+      : `Defines the Python function \`${name}\` without parameters.`;
   }
 
-  if (/^class\s+\w+/.test(trimmed)) {
-    const match = trimmed.match(/^class\s+(\w+)/);
+  // ----------------------------------------------------------
+  // JavaScript / TypeScript function
+  // ----------------------------------------------------------
+
+  const jsFunction = trimmed.match(
+    /^(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(([^)]*)\)/
+  );
+
+  if (jsFunction) {
+    const name = jsFunction[1];
+    const params = jsFunction[2].trim();
+
+    return params
+      ? `Defines the function \`${name}\`, which accepts \`${params}\` as parameter(s).`
+      : `Defines the function \`${name}\` without parameters.`;
+  }
+
+  // ----------------------------------------------------------
+  // Arrow function
+  // ----------------------------------------------------------
+
+  const arrowFunction = trimmed.match(
+    /^(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\(([^)]*)\)|([A-Za-z_$][\w$]*))\s*=>/
+  );
+
+  if (arrowFunction) {
+    const name = arrowFunction[1];
+    const params = arrowFunction[2] ?? arrowFunction[3] ?? "";
+
+    return params.trim()
+      ? `Defines the arrow function \`${name}\`, which accepts \`${params.trim()}\` as parameter(s).`
+      : `Defines the arrow function \`${name}\`.`;
+  }
+
+  // ----------------------------------------------------------
+  // Class
+  // ----------------------------------------------------------
+
+  const classMatch = trimmed.match(
+    /^class\s+([A-Za-z_$][\w$]*)/
+  );
+
+  if (classMatch) {
+    return `Defines the class \`${classMatch[1]}\`, which can serve as a blueprint for creating objects.`;
+  }
+
+  // ----------------------------------------------------------
+  // For loops
+  // ----------------------------------------------------------
+
+  if (
+    /^for\s*\(/.test(trimmed) ||
+    /^for\s+\w+\s+in\s+/.test(trimmed) ||
+    /\bforEach\s*\(/.test(trimmed)
+  ) {
+    return "Starts a loop that repeatedly processes items or executes code for multiple iterations.";
+  }
+
+  // ----------------------------------------------------------
+  // While loops
+  // ----------------------------------------------------------
+
+  if (
+    /^while\s*\(/.test(trimmed) ||
+    /^while\s+True\s*:/.test(trimmed) ||
+    /^while\s+true\s*\{?/.test(trimmed)
+  ) {
+    return "Starts a while loop that continues executing while its condition remains true.";
+  }
+
+  // ----------------------------------------------------------
+  // If condition
+  // ----------------------------------------------------------
+
+  if (
+    /^if\s*\(/.test(trimmed) ||
+    /^if\s+.+:/.test(trimmed)
+  ) {
+    const condition = trimmed
+      .replace(/^if\s*/, "")
+      .replace(/^\(/, "")
+      .replace(/\)\s*\{?$/, "")
+      .replace(/:\s*$/, "");
+
+    return condition
+      ? `Checks whether the condition \`${condition}\` is true before executing the related code.`
+      : "Checks a condition before executing the related code.";
+  }
+
+  // ----------------------------------------------------------
+  // Else if / elif
+  // ----------------------------------------------------------
+
+  if (
+    /^else\s+if\s*\(/.test(trimmed) ||
+    /^elif\s+/.test(trimmed)
+  ) {
+    return "Checks another condition when the previous condition was not satisfied.";
+  }
+
+  // ----------------------------------------------------------
+  // Else
+  // ----------------------------------------------------------
+
+  if (/^else\b/.test(trimmed)) {
+    return "Defines the alternative block that runs when the previous condition is false.";
+  }
+
+  // ----------------------------------------------------------
+  // Switch / case
+  // ----------------------------------------------------------
+
+  if (/^switch\s*\(/.test(trimmed)) {
+    return "Starts a switch statement that selects a block of code based on a value.";
+  }
+
+  if (/^case\s+/.test(trimmed)) {
+    return "Defines one possible case inside a switch statement.";
+  }
+
+  // ----------------------------------------------------------
+  // Return
+  // ----------------------------------------------------------
+
+  if (/^return\b/.test(trimmed)) {
+    const value = trimmed
+      .replace(/^return\s*/, "")
+      .replace(/;$/, "")
+      .trim();
+
+    return value
+      ? `Returns the value \`${value}\` from the current function.`
+      : "Returns control from the current function without a value.";
+  }
+
+  // ----------------------------------------------------------
+  // Print / console output
+  // ----------------------------------------------------------
+
+  if (/\bconsole\.log\s*\(/.test(trimmed)) {
+    const match = trimmed.match(/console\.log\s*\((.*)\)/);
 
     return match
-      ? `Defines the class \`${match[1]}\`, which can be used as a blueprint for creating objects.`
-      : "Defines a class.";
+      ? `Displays \`${match[1]}\` in the browser console.`
+      : "Displays information in the browser console.";
   }
 
-  return "Executes a statement or operation as part of the program's flow.";
-}
+  if (/\bprint\s*\(/.test(trimmed)) {
+    const match = trimmed.match(/print\s*\((.*)\)/);
 
+    return match
+      ? `Displays \`${match[1]}\` as program output.`
+      : "Displays information as program output.";
+  }
+
+  if (/\bprintf\s*\(/.test(trimmed)) {
+    return "Formats and displays output to the standard output stream.";
+  }
+
+  if (/\bcout\s*<</.test(trimmed)) {
+    return "Sends output to the standard output stream.";
+  }
+
+  // ----------------------------------------------------------
+  // Variable declarations
+  // ----------------------------------------------------------
+
+  const declaredVariable = trimmed.match(
+    /^(const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(.+?);?$/
+  );
+
+  if (declaredVariable) {
+    const keyword = declaredVariable[1];
+    const name = declaredVariable[2];
+    const value = declaredVariable[3].replace(/;$/, "").trim();
+
+    return `Declares the ${keyword} variable \`${name}\` and assigns it the value \`${value}\`.`;
+  }
+
+  // ----------------------------------------------------------
+  // Python variable assignment
+  // ----------------------------------------------------------
+
+  const pythonVariable = trimmed.match(
+    /^([A-Za-z_]\w*)\s*=\s*(.+)$/
+  );
+
+  if (
+    language === "python" &&
+    pythonVariable &&
+    !/^(if|elif|while|for|return)\b/.test(trimmed)
+  ) {
+    const name = pythonVariable[1];
+    const value = pythonVariable[2].trim();
+
+    return `Assigns \`${value}\` to the Python variable \`${name}\`.`;
+  }
+
+  // ----------------------------------------------------------
+  // Arithmetic assignment
+  // ----------------------------------------------------------
+
+  const arithmetic = trimmed.match(
+    /^([A-Za-z_$][\w$]*)\s*=\s*(.+)\s*([+\-*/%])\s*(.+);?$/
+  );
+
+  if (arithmetic) {
+    const variable = arithmetic[1];
+    const left = arithmetic[2].trim();
+    const operator = arithmetic[3];
+    const right = arithmetic[4].replace(/;$/, "").trim();
+
+    const operations = {
+      "+": "adds",
+      "-": "subtracts",
+      "*": "multiplies",
+      "/": "divides",
+      "%": "calculates the remainder of"
+    };
+
+    return `Calculates the result by ${operations[operator]} \`${left}\` and \`${right}\`, then stores it in \`${variable}\`.`;
+  }
+
+  // ----------------------------------------------------------
+  // Array declaration
+  // ----------------------------------------------------------
+
+  const arrayMatch = trimmed.match(
+    /^(?:const|let|var)?\s*([A-Za-z_$][\w$]*)\s*=\s*\[(.*)\]/
+  );
+
+  if (arrayMatch) {
+    const name = arrayMatch[1];
+    const values = arrayMatch[2].trim();
+
+    return values
+      ? `Creates an array named \`${name}\` containing the specified values.`
+      : `Creates an empty array named \`${name}\`.`;
+  }
+
+  // ----------------------------------------------------------
+  // Object declaration
+  // ----------------------------------------------------------
+
+  const objectMatch = trimmed.match(
+    /^(?:const|let|var)?\s*([A-Za-z_$][\w$]*)\s*=\s*\{/
+  );
+
+  if (objectMatch) {
+    return `Creates an object named \`${objectMatch[1]}\` containing properties and values.`;
+  }
+
+  // ----------------------------------------------------------
+  // Function call
+  // ----------------------------------------------------------
+
+  const functionCall = trimmed.match(
+    /^([A-Za-z_$][\w$]*)\s*\((.*)\)\s*;?$/
+  );
+
+  if (functionCall) {
+    const name = functionCall[1];
+
+    return functionCall[2].trim()
+      ? `Calls the function \`${name}()\` with the provided argument(s).`
+      : `Calls the function \`${name}()\` without arguments.`;
+  }
+
+  // ----------------------------------------------------------
+  // HTML
+  // ----------------------------------------------------------
+
+  if (language === "html") {
+    const htmlTag = trimmed.match(/^<([A-Za-z][\w-]*)\b/);
+
+    if (htmlTag) {
+      return `Creates or starts the HTML \`${htmlTag[1]}\` element.`;
+    }
+
+    if (/^<\/[A-Za-z]/.test(trimmed)) {
+      return "Closes an HTML element.";
+    }
+  }
+
+  // ----------------------------------------------------------
+  // CSS
+  // ----------------------------------------------------------
+
+  if (
+    language === "css" &&
+    /^[.#]?[A-Za-z][\w-]*\s*\{/.test(trimmed)
+  ) {
+    return "Starts a CSS rule that defines styling properties for the selected element or class.";
+  }
+
+  // ----------------------------------------------------------
+  // Fallback
+  // ----------------------------------------------------------
+
+  return "Executes a statement or operation that contributes to the program's overall logic.";
+} 
 
 // ------------------------------------------------------------
 // Local Explanation Engine V2
 // ------------------------------------------------------------
 
+// ============================================================
+// Potential Issues Detector
+// ============================================================
+
+function findPotentialIssues(code, language) {
+  const lines = code.split("\n");
+  const issues = [];
+
+  const definedVariables = new Set();
+  const usedVariables = new Map();
+
+  lines.forEach((rawLine, index) => {
+    const lineNumber = index + 1;
+    const line = rawLine.trim();
+
+    if (!line) return;
+
+    // --------------------------------------------------------
+    // Detect variable definitions
+    // --------------------------------------------------------
+
+    const jsVariable = line.match(
+      /^(?:const|let|var)\s+([A-Za-z_$][\w$]*)/
+    );
+
+    if (jsVariable) {
+      definedVariables.add(jsVariable[1]);
+    }
+
+    if (language === "python") {
+      const pythonVariable = line.match(
+        /^([A-Za-z_]\w*)\s*=(?!=)/
+      );
+
+      if (pythonVariable) {
+        definedVariables.add(pythonVariable[1]);
+      }
+    }
+
+    // --------------------------------------------------------
+    // Detect obvious TODO / FIXME markers
+    // --------------------------------------------------------
+
+    if (/\b(TODO|FIXME|XXX)\b/i.test(line)) {
+      issues.push({
+        line: lineNumber,
+        type: "review",
+        message:
+          "This line contains a TODO/FIXME marker and may represent unfinished work."
+      });
+    }
+
+    // --------------------------------------------------------
+    // Detect empty functions
+    // --------------------------------------------------------
+
+    if (
+      /^(def\s+\w+\s*\([^)]*\)|(?:async\s+)?function\s+\w+\s*\([^)]*\))\s*:?\s*\{?\s*\}?$/.test(
+        line
+      )
+    ) {
+      issues.push({
+        line: lineNumber,
+        type: "warning",
+        message:
+          "This function appears to have no implementation yet."
+      });
+    }
+
+    // --------------------------------------------------------
+    // Detect console/debug statements
+    // --------------------------------------------------------
+
+    if (
+      /\bconsole\.log\s*\(/.test(line) ||
+      /\bdebugger\b/.test(line)
+    ) {
+      issues.push({
+        line: lineNumber,
+        type: "review",
+        message:
+          "This looks like debugging code. Consider removing it before production if it is no longer needed."
+      });
+    }
+
+    // --------------------------------------------------------
+    // Detect very broad exception handling
+    // --------------------------------------------------------
+
+    if (
+      language === "python" &&
+      /^except\s*:\s*$/.test(line)
+    ) {
+      issues.push({
+        line: lineNumber,
+        type: "warning",
+        message:
+          "This catches every exception without specifying an exception type. More specific exception handling is usually safer."
+      });
+    }
+
+    // --------------------------------------------------------
+    // Detect suspicious hard-coded secrets
+    // --------------------------------------------------------
+
+    if (
+      /(api[_-]?key|secret|password|token)\s*[:=]\s*["'][^"']+["']/i.test(
+        line
+      )
+    ) {
+      issues.push({
+        line: lineNumber,
+        type: "security",
+        message:
+          "This line may contain a hard-coded secret or credential. Sensitive values should normally be stored securely outside the source code."
+      });
+    }
+
+    // --------------------------------------------------------
+    // Detect common infinite-loop patterns
+    // --------------------------------------------------------
+
+    if (
+      /^while\s*\(\s*true\s*\)/.test(line) ||
+      /^while\s+True\s*:/.test(line)
+    ) {
+      issues.push({
+        line: lineNumber,
+        type: "review",
+        message:
+          "This is an intentionally infinite loop unless a break or another exit condition is provided."
+      });
+    }
+
+    // --------------------------------------------------------
+    // Track simple identifier usage
+    // --------------------------------------------------------
+
+    const identifiers = line.match(
+      /\b[A-Za-z_$][A-Za-z0-9_$]*\b/g
+    );
+
+    if (identifiers) {
+      identifiers.forEach((name) => {
+        if (!usedVariables.has(name)) {
+          usedVariables.set(name, lineNumber);
+        }
+      });
+    }
+  });
+
+  // ----------------------------------------------------------
+  // Detect common unused variables
+  // ----------------------------------------------------------
+
+  definedVariables.forEach((variable) => {
+    let usageCount = 0;
+
+    lines.forEach((line) => {
+      const matches = line.match(
+        new RegExp(`\\b${variable}\\b`, "g")
+      );
+
+      if (matches) {
+        usageCount += matches.length;
+      }
+    });
+
+    if (usageCount <= 1) {
+      const definitionLine = lines.findIndex((line) =>
+        new RegExp(`\\b${variable}\\b`).test(line)
+      );
+
+      issues.push({
+        line: definitionLine + 1,
+        type: "review",
+        message:
+          `Variable \`${variable}\` appears to be declared or assigned but may not be used later.`
+      });
+    }
+  });
+
+  return issues;
+}
+
 function generateLocalExplanation(code, language, difficulty) {
   const detectedLanguage = detectLanguage(code, language);
   const structure = analyzeStructure(code, detectedLanguage);
+  const issues = findPotentialIssues(code, detectedLanguage);
 
   // IMPORTANT:
   // Keep original lines so line numbers remain accurate.
@@ -492,6 +932,31 @@ function generateLocalExplanation(code, language, difficulty) {
     explanation += `- The snippet contains basic executable statements.\n`;
   }
 
+// Potential Issues
+if (issues.length > 0) {
+  explanation += `## Potential Issues\n\n`;
+
+  issues.slice(0, 10).forEach((issue) => {
+    const icon =
+      issue.type === "security"
+        ? "🔐"
+        : issue.type === "warning"
+        ? "⚠️"
+        : "💡";
+
+    explanation += `- ${icon} **Line ${issue.line}:** ${issue.message}\n`;
+  });
+
+  if (issues.length > 10) {
+    explanation += `- ...and ${issues.length - 10} more potential issue(s).\n`;
+  }
+
+  explanation += `\n`;
+} else {
+  explanation += `## Potential Issues\n\n`;
+  explanation += `No obvious issues were detected by the local rule-based analyzer.\n\n`;
+}
+  
   explanation += `\n---\n\n`;
   explanation += `*Generated by VewKod Local Explanation Engine V2. This fallback runs locally when the AI backend is unavailable.*`;
 
