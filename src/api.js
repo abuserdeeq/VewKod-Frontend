@@ -539,7 +539,7 @@ function explainLine(line, language) {
   if (objectMatch) {
     return `Creates an object named \`${objectMatch[1]}\` containing properties and values.`;
   }
-
+  
   // ----------------------------------------------------------
   // Function call
   // ----------------------------------------------------------
@@ -583,6 +583,19 @@ function explainLine(line, language) {
     return "Starts a CSS rule that defines styling properties for the selected element or class.";
   }
 
+// ----------------------------------------------------------
+// Closing braces / structural lines
+// ----------------------------------------------------------
+
+if (
+  trimmed === "}" ||
+  trimmed === "};" ||
+  trimmed === ")" ||
+  trimmed === "];"
+) {
+  return "Closes the current code block or structural section.";
+}
+  
   // ----------------------------------------------------------
   // Fallback
   // ----------------------------------------------------------
@@ -700,20 +713,17 @@ if (isPythonFunction || isJavaScriptFunction) {
 }
 
     // --------------------------------------------------------
-    // Detect console/debug statements
-    // --------------------------------------------------------
+// Detect explicit debugging statements
+// --------------------------------------------------------
 
-    if (
-      /\bconsole\.log\s*\(/.test(line) ||
-      /\bdebugger\b/.test(line)
-    ) {
-      issues.push({
-        line: lineNumber,
-        type: "review",
-        message:
-          "This looks like debugging code. Consider removing it before production if it is no longer needed."
-      });
-    }
+if (/\bdebugger\b/.test(line)) {
+  issues.push({
+    line: lineNumber,
+    type: "review",
+    message:
+      "This is an explicit debugger statement. Consider removing it before production."
+  });
+}
 
     // --------------------------------------------------------
     // Detect very broad exception handling
