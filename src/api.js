@@ -647,21 +647,57 @@ function findPotentialIssues(code, language) {
     }
 
     // --------------------------------------------------------
-    // Detect empty functions
-    // --------------------------------------------------------
+// Detect genuinely empty functions
+// --------------------------------------------------------
 
-    if (
-      /^(def\s+\w+\s*\([^)]*\)|(?:async\s+)?function\s+\w+\s*\([^)]*\))\s*:?\s*\{?\s*\}?$/.test(
-        line
-      )
-    ) {
-      issues.push({
-        line: lineNumber,
-        type: "warning",
-        message:
-          "This function appears to have no implementation yet."
-      });
-    }
+const isPythonFunction = /^def\s+\w+\s*\([^)]*\)\s*:/.test(line);
+
+const isJavaScriptFunction =
+  /^(?:async\s+)?function\s+\w+\s*\([^)]*\)\s*\{\s*\}?$/.test(line);
+
+if (isPythonFunction || isJavaScriptFunction) {
+  const currentIndent = rawLine.match(/^\s*/)?.[0].length ?? 0;
+
+  let nextCodeLine = null;
+
+  for (let i = index + 1; i < lines.length; i++) {
+    const nextRawLine = lines[i];
+
+    if (!nextRawLine.trim()) continue;
+
+    nextCodeLine = {
+      line: nextRawLine.trim(),
+      indent: nextRawLine.match(/^\s*/)?.[0].length ?? 0,
+      number: i + 1
+    };
+
+    break;
+  }
+
+  let isEmpty = false;
+
+  if (isPythonFunction) {
+    // A Python function is empty if there is no indented body
+    // after its definition.
+    isEmpty =
+      !nextCodeLine ||
+      nextCodeLine.indent <= currentIndent;
+  }
+
+  if (isJavaScriptFunction) {
+    // JavaScript function with an empty body: function test() {}
+    isEmpty = /\{\s*\}$/.test(line);
+  }
+
+  if (isEmpty) {
+    issues.push({
+      line: lineNumber,
+      type: "warning",
+      message:
+        "This function appears to have no implementation yet."
+    });
+  }
+}
 
     // --------------------------------------------------------
     // Detect console/debug statements
