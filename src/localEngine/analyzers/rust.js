@@ -116,6 +116,13 @@ export function explainLine(rawLine, symbolTable) {
 
   if (["}"].includes(trimmed)) return "Closes the current code block.";
 
+  // A line with no trailing `;` and not opening/closing a block is
+  // very likely Rust's implicit-return expression (the value of the
+  // last expression in a block is returned automatically).
+  if (!trimmed.endsWith(";") && !trimmed.endsWith("{")) {
+    return `Evaluates \`${trimmed}\` as the value returned from this block (Rust's implicit-return syntax — no \`return\` keyword needed).`;
+  }
+
   return genericFallbackExplanation();
 }
 

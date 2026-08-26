@@ -28,7 +28,7 @@ export function buildSymbolTable(lines, symbolTable) {
     const cls = line.match(/\b(?:class|data class)\s+([A-Za-z_]\w*)/);
     if (cls) symbolTable.add(cls[1], "class");
 
-    const decl = line.match(/^(val|var)\s+([A-Za-z_]\w*)\s*(?::\s*[\w<>]+)?\s*=\s*(.+)$/);
+    const decl = line.match(/^(val|var)\s+([A-Za-z_]\w*)\s*(?::\s*[\w<>?]+)?\s*=\s*(.+)$/);
     if (decl) symbolTable.add(decl[2], literalRole(decl[3]));
 
     const forLoop = line.match(/^for\s*\(\s*([A-Za-z_]\w*)\s+in\s+([A-Za-z_]\w*)\s*\)/);
@@ -110,7 +110,7 @@ export function explainLine(rawLine, symbolTable) {
   const print = trimmed.match(/\bprintln\s*\((.*)\)\s*$/);
   if (print) return `Prints \`${print[1].trim()}\` to the console, followed by a newline.`;
 
-  const decl = trimmed.match(/^(val|var)\s+([A-Za-z_]\w*)\s*(?::\s*[\w<>]+)?\s*=\s*(.+)$/);
+  const decl = trimmed.match(/^(val|var)\s+([A-Za-z_]\w*)\s*(?::\s*[\w<>?]+)?\s*=\s*(.+)$/);
   if (decl) {
     const kind = decl[1] === "val" ? "read-only" : "mutable";
     return `Declares the ${kind} property \`${decl[2]}\` and assigns it \`${decl[3]}\`.`;
@@ -124,7 +124,9 @@ export function explainLine(rawLine, symbolTable) {
 export function findIssues(lines) {
   const issues = findCommonIssues(lines);
   lines.forEach((rawLine, index) => {
-    if (/!!\s*\./.test(rawLine) || /!!\s*$/.test(rawLine.trim())) {
+    // Catches `x!!` anywhere on the line — inside a function call
+    // (`println(x!!)`), a property access (`x!!.foo`), or standalone.
+    if (/[A-Za-z_]\w*!!/.test(rawLine)) {
       issues.push({ line: index + 1, type: "warning", message: "The `!!` non-null assertion throws if the value is actually `null`. A safe call `?.` is usually safer." });
     }
   });
