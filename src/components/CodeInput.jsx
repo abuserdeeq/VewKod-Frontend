@@ -59,7 +59,6 @@ const prismLanguageMap = {
 export default function CodeInput({ onExplain, loading }) {
   const [code, setCode] = useState("");
   const [language, setLanguage] = useState("python");
-  const [difficulty, setDifficulty] = useState("beginner");
   const [showLangDropdown, setShowLangDropdown] = useState(false);
   const [showExamples, setShowExamples] = useState(false);
   const [lineCount, setLineCount] = useState(1);
@@ -96,11 +95,11 @@ export default function CodeInput({ onExplain, loading }) {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [code, difficulty, language]);
+  }, [code, language]);
 
   const handleSubmit = () => {
     if (!code.trim() || loading) return;
-    onExplain(code, difficulty, language);
+    onExplain(code, language);
   };
 
   const handleClear = () => {
@@ -186,25 +185,6 @@ export default function CodeInput({ onExplain, loading }) {
           </span>
           <span className="text-slate-600">/</span>
           <span className="text-slate-600">{MAX_CHARS.toLocaleString()}</span>
-        </div>
-      </div>
-
-      {/* Toolbar - Row 2: Difficulty */}
-      <div className="flex">
-        <div className="flex rounded-lg bg-[#1e293b] border border-slate-700/40 p-0.5">
-          {["beginner", "intermediate", "advanced"].map((level) => (
-            <button
-              key={level}
-              onClick={() => setDifficulty(level)}
-              className={`px-3 sm:px-4 py-1.5 rounded-md text-[10px] sm:text-xs capitalize transition-all ${
-                difficulty === level
-                  ? "bg-blue-600 text-white shadow-lg shadow-blue-500/25"
-                  : "text-slate-400 hover:text-slate-200"
-              }`}
-            >
-              <span>{level}</span>
-            </button>
-          ))}
         </div>
       </div>
 
