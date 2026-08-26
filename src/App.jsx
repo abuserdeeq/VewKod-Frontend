@@ -21,18 +21,17 @@ export default function App() {
     setToast({ message, type });
   }, []);
 
-  const handleExplain = async (code, difficulty, language) => {
+  const handleExplain = async (code, language) => {
     setLoading(true);
     setError("");
     setResult("");
 
     try {
-      const { explanation, source } = await explainCode(code, difficulty, language);
+      const { explanation, source } = await explainCode(code, language);
       setResult(explanation);
       setResultSource(source);
       setLastExplanation({
         code,
-        difficulty,
         language,
         explanation,
         source,

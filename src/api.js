@@ -11,7 +11,7 @@ const API_BASE_URL = "https://vewkod.onrender.com";
 // ============================================================
 import { generateLocalExplanation } from "./localEngine/core/engineRunner.js";
 
-export async function explainCode(code, difficulty, language = "auto") {
+export async function explainCode(code, language = "auto") {
   // Try backend first
   try {
     const controller = new AbortController();
@@ -20,7 +20,7 @@ export async function explainCode(code, difficulty, language = "auto") {
     const response = await fetch(`${API_BASE_URL}/explain`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code, difficulty, language }),
+      body: JSON.stringify({ code, language }),
       signal: controller.signal,
     });
 
@@ -35,7 +35,7 @@ export async function explainCode(code, difficulty, language = "auto") {
   } catch (err) {
     console.warn("Backend unavailable, using local explanation:", err.message);
     // Fallback to local explanation
-    const explanation = generateLocalExplanation(code, language, difficulty);
+    const explanation = generateLocalExplanation(code, language);
     return { explanation, source: "local" };
   }
 }
