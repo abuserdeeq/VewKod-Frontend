@@ -9,6 +9,10 @@
 // line as an isolated string.
 // ============================================================
 
+function article(word) {
+  return /^[aeiou]/i.test(word) ? "an" : "a";
+}
+
 export function createSymbolTable() {
   return {
     symbols: new Map(),
@@ -63,7 +67,7 @@ export function createSymbolTable() {
         case "set":
           return `the \`${name}\` set`;
         case "loop-item":
-          return `the current item (\`${name}\`) from ${s.of ? `\`${s.of}\`` : "the collection being looped over"}${s.ofType ? ` (a ${s.ofType})` : ""}`;
+          return `the current item (\`${name}\`) from ${s.of ? `\`${s.of}\`` : "the collection being looped over"}${s.ofType ? ` (${article(s.ofType)} ${s.ofType})` : ""}`;
         case "function":
           return `the \`${name}\` function`;
         case "class":
