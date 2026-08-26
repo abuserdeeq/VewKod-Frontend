@@ -1,0 +1,143 @@
+import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation } from "../shared/patterns.js";
+
+export const id = "php";
+export const label = "PHP";
+
+export function detect(code) {
+  // Require the PHP tag, or a PHP-style function signature with a
+  // $-prefixed parameter — this avoids colliding with Bash, which
+  // also uses `$var` + `echo` but never `function foo($x)`.
+  return /<\?php/.test(code) || /function\s+\w+\s*\(\s*\$/.test(code);
+}
+
+function literalRole(value) {
+  const v = value.trim().replace(/;$/, "");
+  if (/^\[.*\]$/s.test(v) || /^array\s*\(/.test(v)) return "list";
+  if (/^["'].*["']$/.test(v)) return "string";
+  if (/^(true|false)$/i.test(v)) return "boolean";
+  if (/^-?\d+(\.\d+)?$/.test(v)) return "number";
+  return "variable";
+}
+
+export function buildSymbolTable(lines, symbolTable) {
+  lines.forEach((rawLine) => {
+    const line = rawLine.trim();
+    if (!line || isCommentLine(line)) return;
+
+    const fn = line.match(/^function\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/);
+    if (fn) symbolTable.add(fn[1], "function", { parameters: fn[2].trim() });
+
+    const cls = line.match(/\bclass\s+([A-Za-z_]\w*)/);
+    if (cls) symbolTable.add(cls[1], "class");
+
+    const decl = line.match(/^\$([A-Za-z_]\w*)\s*=\s*(.+);/);
+    if (decl) symbolTable.add(decl[1], literalRole(decl[2]));
+
+    // foreach ($items as $item)
+    const forEach = line.match(/^foreach\s*\(\s*\$([A-Za-z_]\w*)\s+as\s+\$([A-Za-z_]\w*)\s*\)/);
+    if (forEach) {
+      const info = symbolTable.get(forEach[1]);
+      symbolTable.add(forEach[2], "loop-item", { of: forEach[1], ofType: info ? info.role : "array" });
+    }
+  });
+
+  return symbolTable;
+}
+
+export function analyzeStructure(lines) {
+  const result = { functions: [], classes: [], imports: [], variables: [], loops: [], conditionals: [], returns: [], outputs: [], comments: [] };
+
+  lines.forEach((rawLine, index) => {
+    const lineNumber = index + 1;
+    const line = rawLine.trim();
+    if (!line) return;
+    if (isCommentLine(line)) result.comments.push(lineNumber);
+    if (/^(require|include)(_once)?\b/.test(line)) result.imports.push(lineNumber);
+
+    const fn = line.match(/^function\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/);
+    if (fn) result.functions.push({ line: lineNumber, name: fn[1], parameters: fn[2] });
+
+    const cls = line.match(/\bclass\s+([A-Za-z_]\w*)/);
+    if (cls) result.classes.push({ line: lineNumber, name: cls[1] });
+
+    const decl = line.match(/^\$([A-Za-z_]\w*)\s*=/);
+    if (decl) result.variables.push({ line: lineNumber, name: `$${decl[1]}` });
+
+    if (/^(for|while|foreach)\s*\(/.test(line)) result.loops.push(lineNumber);
+    if (/^if\s*\(/.test(line) || /^else\b/.test(line)) result.conditionals.push(lineNumber);
+    if (/^return\b/.test(line)) result.returns.push(lineNumber);
+    if (/\becho\b/.test(line) || /\bprint\s*\(/.test(line)) result.outputs.push(lineNumber);
+  });
+
+  return result;
+}
+
+export function explainLine(rawLine, symbolTable) {
+  const trimmed = rawLine.trim();
+  if (!trimmed) return null;
+  if (isCommentLine(trimmed)) return commentExplanation();
+  if (trimmed === "<?php" || trimmed === "?>") return "Marks the boundary of a PHP code block.";
+
+  if (/^(require|include)(_once)?\b/.test(trimmed)) return "Includes another PHP file so its code/definitions become available here.";
+
+  const cls = trimmed.match(/\bclass\s+([A-Za-z_]\w*)/);
+  if (cls) return `Defines the class \`${cls[1]}\`, which can serve as a blueprint for creating objects.`;
+
+  const fn = trimmed.match(/^function\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/);
+  if (fn) {
+    return fn[2].trim()
+      ? `Defines the function \`${fn[1]}\`, which accepts \`${fn[2].trim()}\` as parameter(s).`
+      : `Defines the function \`${fn[1]}\` without parameters.`;
+  }
+
+  const forEach = trimmed.match(/^foreach\s*\(\s*\$([A-Za-z_]\w*)\s+as\s+\$([A-Za-z_]\w*)\s*\)/);
+  if (forEach) {
+    const info = symbolTable.get(forEach[1]);
+    const phrase = info && info.role === "list" ? `the \`$${forEach[1]}\` array` : `\`$${forEach[1]}\``;
+    return `Iterates over ${phrase}; on each pass, \`$${forEach[2]}\` represents the current item.`;
+  }
+  if (/^for\s*\(/.test(trimmed)) return "Starts a counted loop that repeats a block of code a set number of times.";
+  if (/^while\s*\(/.test(trimmed)) return "Starts a while loop that keeps running while its condition stays true.";
+
+  const ifMatch = trimmed.match(/^if\s*\((.+)\)\s*\{?$/);
+  if (ifMatch) {
+    const condition = ifMatch[1].trim();
+    const known = symbolTable.knownIdentifiersIn(condition.replace(/\$/g, ""));
+    if (known.length === 1 && condition.replace(/\$/g, "") === known[0]) return `Checks whether ${symbolTable.describe(known[0])} is truthy before running the code that follows.`;
+    return `Checks whether \`${condition}\` is true before running the code that follows.`;
+  }
+  if (/^\}?\s*else\b/.test(trimmed)) return "Defines the alternative block that runs when the previous condition is false.";
+
+  const ret = trimmed.match(/^return\b\s*(.*?);?$/);
+  if (ret) return ret[1].trim() ? `Returns \`${ret[1].trim()}\` from the current function.` : "Returns control from the current function.";
+
+  const echo = trimmed.match(/^echo\s+(.+?);?$/);
+  if (echo) return `Outputs \`${echo[1].trim()}\` to the page/console.`;
+
+  const decl = trimmed.match(/^\$([A-Za-z_]\w*)\s*=\s*(.+);/);
+  if (decl) {
+    const info = symbolTable.get(decl[1]);
+    if (info && info.role === "list") return `Creates the array \`$${decl[1]}\` containing \`${decl[2]}\`.`;
+    return `Assigns \`${decl[2]}\` to the variable \`$${decl[1]}\`.`;
+  }
+
+  if (["}"].includes(trimmed)) return "Closes the current code block.";
+
+  return genericFallbackExplanation();
+}
+
+export function findIssues(lines) {
+  const issues = findCommonIssues(lines);
+
+  lines.forEach((rawLine, index) => {
+    const line = rawLine.trim();
+    if (/[^=!]==[^=]/.test(line)) {
+      issues.push({ line: index + 1, type: "review", message: "Uses `==` for comparison. `===` avoids PHP's loose type coercion and is usually safer." });
+    }
+    if (/\bmysql_query\s*\(/.test(line)) {
+      issues.push({ line: index + 1, type: "security", message: "The `mysql_*` extension is removed from modern PHP and was prone to SQL injection. Use PDO or mysqli with prepared statements." });
+    }
+  });
+
+  return issues;
+}
