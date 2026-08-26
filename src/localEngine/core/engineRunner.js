@@ -150,7 +150,7 @@ function buildIssuesSection(issues) {
   return text;
 }
 
-export function generateLocalExplanation(code, language, difficulty) {
+export function generateLocalExplanation(code, language) {
   const detectedLanguage = detectLanguage(code, language);
   const analyzer = getAnalyzer(detectedLanguage);
   const lines = code.split("\n");
@@ -164,18 +164,16 @@ export function generateLocalExplanation(code, language, difficulty) {
   let explanation = buildOverview(detectedLanguage, analyzer.label || detectedLanguage, lines, structure);
   explanation += buildStructureBreakdown(structure);
 
-  if (difficulty !== "advanced") {
-    explanation += `## Line-by-Line Explanation\n\n`;
-    const maxLines = 20;
+  explanation += `## Line-by-Line Explanation\n\n`;
+  const maxLines = 20;
 
-    lines.slice(0, maxLines).forEach((line, index) => {
-      const description = analyzer.explainLine(line, symbolTable);
-      if (description) explanation += `- **Line ${index + 1}:** ${description}\n`;
-    });
+  lines.slice(0, maxLines).forEach((line, index) => {
+    const description = analyzer.explainLine(line, symbolTable);
+    if (description) explanation += `- **Line ${index + 1}:** ${description}\n`;
+  });
 
-    if (lines.length > maxLines) explanation += `- ...and ${lines.length - maxLines} more line(s).\n`;
-    explanation += `\n`;
-  }
+  if (lines.length > maxLines) explanation += `- ...and ${lines.length - maxLines} more line(s).\n`;
+  explanation += `\n`;
 
   explanation += buildKeyConcepts(structure);
   explanation += buildIssuesSection(issues);
