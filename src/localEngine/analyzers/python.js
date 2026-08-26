@@ -226,6 +226,17 @@ export function explainLine(rawLine, symbolTable) {
       : `Calls ${label} without arguments.`;
   }
 
+  // obj.method(args) — e.g. list.append(x), dict.update(x)
+  const methodCall = trimmed.match(/^([A-Za-z_]\w*)\.([A-Za-z_]\w*)\s*\((.*)\)\s*$/);
+  if (methodCall) {
+    const [, objName, methodName, args] = methodCall;
+    const objInfo = symbolTable.get(objName);
+    const objPhrase = objInfo ? symbolTable.describe(objName) : `\`${objName}\``;
+    return args.trim()
+      ? `Calls \`.${methodName}(${args.trim()})\` on ${objPhrase}.`
+      : `Calls \`.${methodName}()\` on ${objPhrase}.`;
+  }
+
   return genericFallbackExplanation();
 }
 

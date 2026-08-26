@@ -28,6 +28,12 @@ export function buildSymbolTable(lines, symbolTable) {
     const shortDecl = line.match(/^([A-Za-z_]\w*)\s*:=\s*(.+)$/);
     if (shortDecl) symbolTable.add(shortDecl[1], literalRole(shortDecl[2]));
 
+    const multiDecl = line.match(/^([A-Za-z_]\w*)\s*,\s*([A-Za-z_]\w*)\s*:=\s*(.+)$/);
+    if (multiDecl) {
+      symbolTable.add(multiDecl[1], "variable");
+      symbolTable.add(multiDecl[2], multiDecl[2] === "err" ? "variable" : "variable");
+    }
+
     const varDecl = line.match(/^var\s+([A-Za-z_]\w*)\s+(\[\]\w+|map\[\w+\]\w+|\w+)/);
     if (varDecl) {
       const t = varDecl[2];
@@ -118,6 +124,16 @@ export function explainLine(rawLine, symbolTable) {
 
   const shortDecl = trimmed.match(/^([A-Za-z_]\w*)\s*:=\s*(.+)$/);
   if (shortDecl) return `Declares and initializes \`${shortDecl[1]}\` with \`${shortDecl[2]}\` (type inferred by Go).`;
+
+  // multi-value short decl: result, err := someFunc(...)
+  const multiDecl = trimmed.match(/^([A-Za-z_]\w*)\s*,\s*([A-Za-z_]\w*)\s*:=\s*(.+)$/);
+  if (multiDecl) {
+    const [, first, second, callExpr] = multiDecl;
+    const isErrPattern = second === "err";
+    return isErrPattern
+      ? `Calls \`${callExpr.trim()}\`, storing the result in \`${first}\` and any error in \`${second}\`.`
+      : `Calls \`${callExpr.trim()}\`, assigning the results to \`${first}\` and \`${second}\`.`;
+  }
 
   if (["}"].includes(trimmed)) return "Closes the current code block.";
 

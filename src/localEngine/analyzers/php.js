@@ -3,6 +3,31 @@ import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExp
 export const id = "php";
 export const label = "PHP";
 
+function article(word) {
+  return /^[aeiou]/i.test(word) ? "an" : "a";
+}
+
+// PHP identifiers are stored in the shared symbol table without their
+// `$` sigil (so lookups work like every other language), but PHP code
+// should always be *displayed* with `$` — this rebuilds that phrasing.
+function phpDescribe(name, symbolTable) {
+  const info = symbolTable.get(name);
+  if (!info) return `\`$${name}\``;
+
+  switch (info.role) {
+    case "loop-item": {
+      const ofType = info.ofType;
+      return `the current item (\`$${name}\`) from ${info.of ? `\`$${info.of}\`` : "the array being looped over"}${ofType ? ` (${article(ofType)} ${ofType})` : ""}`;
+    }
+    case "list":
+      return `the \`$${name}\` array`;
+    case "dict":
+      return `the \`$${name}\` associative array`;
+    default:
+      return `\`$${name}\``;
+  }
+}
+
 export function detect(code) {
   // Require the PHP tag, or a PHP-style function signature with a
   // $-prefixed parameter — this avoids colliding with Bash, which
@@ -25,7 +50,10 @@ export function buildSymbolTable(lines, symbolTable) {
     if (!line || isCommentLine(line)) return;
 
     const fn = line.match(/^function\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/);
-    if (fn) symbolTable.add(fn[1], "function", { parameters: fn[2].trim() });
+    if (fn) {
+      symbolTable.add(fn[1], "function", { parameters: fn[2].trim() });
+      (fn[2].match(/\$[A-Za-z_]\w*/g) || []).forEach((p) => symbolTable.add(p.slice(1), "parameter"));
+    }
 
     const cls = line.match(/\bclass\s+([A-Za-z_]\w*)/);
     if (cls) symbolTable.add(cls[1], "class");
@@ -103,7 +131,7 @@ export function explainLine(rawLine, symbolTable) {
   if (ifMatch) {
     const condition = ifMatch[1].trim();
     const known = symbolTable.knownIdentifiersIn(condition.replace(/\$/g, ""));
-    if (known.length === 1 && condition.replace(/\$/g, "") === known[0]) return `Checks whether ${symbolTable.describe(known[0])} is truthy before running the code that follows.`;
+    if (known.length === 1 && condition.replace(/\$/g, "") === known[0]) return `Checks whether ${phpDescribe(known[0], symbolTable)} is truthy before running the code that follows.`;
     return `Checks whether \`${condition}\` is true before running the code that follows.`;
   }
   if (/^\}?\s*else\b/.test(trimmed)) return "Defines the alternative block that runs when the previous condition is false.";
@@ -119,6 +147,13 @@ export function explainLine(rawLine, symbolTable) {
     const info = symbolTable.get(decl[1]);
     if (info && info.role === "list") return `Creates the array \`$${decl[1]}\` containing \`${decl[2]}\`.`;
     return `Assigns \`${decl[2]}\` to the variable \`$${decl[1]}\`.`;
+  }
+
+  const call = trimmed.match(/^([A-Za-z_]\w*)\s*\((.*)\)\s*;?$/);
+  if (call) {
+    const info = symbolTable.get(call[1]);
+    const label = info && info.role === "function" ? `the \`${call[1]}()\` function defined above` : `\`${call[1]}()\``;
+    return call[2].trim() ? `Calls ${label} with the provided argument(s).` : `Calls ${label} without arguments.`;
   }
 
   if (["}"].includes(trimmed)) return "Closes the current code block.";
