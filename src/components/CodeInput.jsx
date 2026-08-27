@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, forwardRef, useImperativeHandle } from "react";
 import Editor from "react-simple-code-editor";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -8,6 +8,7 @@ import {
   Zap,
   BookOpen,
   Code2,
+  X,
 } from "lucide-react";
 
 // PrismJS - Import in CORRECT dependency order
@@ -56,7 +57,7 @@ const prismLanguageMap = {
   auto: "javascript",
 };
 
-export default function CodeInput({ onExplain, loading }) {
+const CodeInput = forwardRef(function CodeInput({ onExplain, onCancel, loading }, ref) {
   const [code, setCode] = useState("");
   const [language, setLanguage] = useState("python");
   const [showLangDropdown, setShowLangDropdown] = useState(false);
@@ -72,7 +73,7 @@ export default function CodeInput({ onExplain, loading }) {
           return Prism.highlight(codeText, grammar, prismLang);
         }
       } catch (err) {
-        console.warn("Prism highlight error:", err);
+        if (import.meta.env.DEV) console.warn("Prism highlight error:", err);
       }
       return codeText
         .replace(/&/g, "&amp;")
@@ -112,6 +113,17 @@ export default function CodeInput({ onExplain, loading }) {
     setShowExamples(false);
   };
 
+  // Lets parent components (e.g. the History panel) load a past snippet
+  // back into the editor without CodeInput giving up ownership of its
+  // own code/language state.
+  useImperativeHandle(ref, () => ({
+    loadSnippet: (snippetCode, snippetLanguage) => {
+      setCode(snippetCode || "");
+      if (snippetLanguage) setLanguage(snippetLanguage);
+      setShowExamples(false);
+    },
+  }));
+
   const charCount = code.length;
   const isNearLimit = charCount > MAX_CHARS * 0.9;
   const currentLang = LANGUAGES.find((l) => l.id === language);
@@ -130,11 +142,14 @@ export default function CodeInput({ onExplain, loading }) {
           <div className="relative">
             <button
               onClick={() => setShowLangDropdown(!showLangDropdown)}
+              aria-haspopup="listbox"
+              aria-expanded={showLangDropdown}
+              aria-label={`Selected language: ${currentLang?.name}. Change language`}
               className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-[#1e293b] border border-slate-700/40 text-xs text-slate-300 hover:border-blue-500/50 transition-colors"
             >
-              <span>{currentLang?.icon}</span>
+              <span aria-hidden="true">{currentLang?.icon}</span>
               <span>{currentLang?.name}</span>
-              <ChevronDown className="w-3 h-3 text-slate-500" />
+              <ChevronDown className="w-3 h-3 text-slate-500" aria-hidden="true" />
             </button>
 
             <AnimatePresence>
@@ -144,11 +159,15 @@ export default function CodeInput({ onExplain, loading }) {
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: -5, scale: 0.95 }}
                   transition={{ duration: 0.15 }}
+                  role="listbox"
+                  aria-label="Programming language"
                   className="absolute top-full left-0 mt-2 w-56 max-h-72 overflow-y-auto rounded-xl bg-[#1e293b] border border-slate-700/40 shadow-xl z-30"
                 >
                   {LANGUAGES.map((lang) => (
                     <button
                       key={lang.id}
+                      role="option"
+                      aria-selected={language === lang.id}
                       onClick={() => {
                         setLanguage(lang.id);
                         setShowLangDropdown(false);
@@ -159,7 +178,7 @@ export default function CodeInput({ onExplain, loading }) {
                           : "text-slate-400 hover:bg-blue-500/10 hover:text-slate-200"
                       }`}
                     >
-                      <span className="w-5 text-center">{lang.icon}</span>
+                      <span className="w-5 text-center" aria-hidden="true">{lang.icon}</span>
                       {lang.name}
                     </button>
                   ))}
@@ -171,9 +190,11 @@ export default function CodeInput({ onExplain, loading }) {
           {/* Example Snippets Toggle */}
           <button
             onClick={() => setShowExamples(!showExamples)}
+            aria-expanded={showExamples}
+            aria-label="Toggle example code snippets"
             className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-[#1e293b] border border-slate-700/40 text-xs text-slate-400 hover:text-slate-200 hover:border-blue-500/30 transition-colors"
           >
-            <BookOpen className="w-3.5 h-3.5" />
+            <BookOpen className="w-3.5 h-3.5" aria-hidden="true" />
             <span>Examples</span>
           </button>
         </div>
@@ -277,17 +298,32 @@ export default function CodeInput({ onExplain, loading }) {
 
       {/* Action Bar */}
       <div className="flex justify-end">
-        <motion.button
-          onClick={handleSubmit}
-          disabled={loading || !code.trim()}
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium text-sm transition-all shadow-lg shadow-blue-500/25 btn-shine"
-        >
-          <Play className="w-4 h-4" />
-          {loading ? "Analyzing..." : "Explain This Code"}
-        </motion.button>
+        {loading ? (
+          <motion.button
+            onClick={onCancel}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            aria-label="Cancel explanation request"
+            className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-[#1e293b] border border-red-500/30 hover:bg-red-500/10 text-red-300 font-medium text-sm transition-all"
+          >
+            <X className="w-4 h-4" />
+            Cancel
+          </motion.button>
+        ) : (
+          <motion.button
+            onClick={handleSubmit}
+            disabled={!code.trim()}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium text-sm transition-all shadow-lg shadow-blue-500/25 btn-shine"
+          >
+            <Play className="w-4 h-4" />
+            Explain This Code
+          </motion.button>
+        )}
       </div>
     </motion.div>
   );
-}
+});
+
+export default CodeInput;

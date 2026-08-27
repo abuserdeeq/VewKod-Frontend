@@ -1,7 +1,7 @@
 import { motion } from "framer-motion";
-import { Code2, Github, Sparkles } from "lucide-react";
+import { Code2, Github, Sparkles, Clock } from "lucide-react";
 
-export default function Header() {
+export default function Header({ historyCount = 0, onOpenHistory }) {
   return (
     <motion.header
       initial={{ opacity: 0, y: -20 }}
@@ -29,6 +29,20 @@ export default function Header() {
         </div>
 
         <div className="flex items-center gap-4">
+          <button
+            onClick={onOpenHistory}
+            aria-label={`Open explanation history${historyCount ? ` (${historyCount} saved)` : ""}`}
+            className="relative flex items-center gap-2 text-sm text-slate-400 hover:text-white transition-colors group"
+          >
+            <Clock className="w-4 h-4 group-hover:scale-110 transition-transform" />
+            <span className="hidden sm:inline">History</span>
+            {historyCount > 0 && (
+              <span className="absolute -top-2 -right-2 sm:static sm:top-auto sm:right-auto flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-blue-500/20 text-blue-300 text-[10px] font-medium">
+                {historyCount}
+              </span>
+            )}
+          </button>
+
           <a
             href="https://github.com/abuserdeeq/VewKod"
             target="_blank"
