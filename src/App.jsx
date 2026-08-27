@@ -1,12 +1,15 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import Header from "./components/Header";
 import CodeInput from "./components/CodeInput";
 import ResultDisplay from "./components/ResultDisplay";
 import Loader from "./components/Loader";
 import Toast from "./components/Toast";
+import HistoryPanel from "./components/HistoryPanel";
 import { explainCode } from "./api";
 import { useLocalStorage } from "./hooks/useLocalStorage";
+
+const MAX_HISTORY_ITEMS = 10;
 
 export default function App() {
   const [result, setResult] = useState("");
@@ -14,8 +17,13 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [toast, setToast] = useState(null);
+  const [showHistory, setShowHistory] = useState(false);
 
-  const [lastExplanation, setLastExplanation] = useLocalStorage("vewkod_last_explanation", null);
+  // Saved past explanations, newest first, capped at MAX_HISTORY_ITEMS.
+  const [history, setHistory] = useLocalStorage("vewkod_history", []);
+
+  const codeInputRef = useRef(null);
+  const abortControllerRef = useRef(null);
 
   const showToast = useCallback((message, type = "success") => {
     setToast({ message, type });
@@ -26,16 +34,24 @@ export default function App() {
     setError("");
     setResult("");
 
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     try {
-      const { explanation, source } = await explainCode(code, language);
+      const { explanation, source } = await explainCode(code, language, controller.signal);
       setResult(explanation);
       setResultSource(source);
-      setLastExplanation({
-        code,
-        language,
-        explanation,
-        source,
-        timestamp: new Date().toISOString(),
+
+      setHistory((prev) => {
+        const entry = {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          code,
+          language,
+          explanation,
+          source,
+          timestamp: new Date().toISOString(),
+        };
+        return [entry, ...prev].slice(0, MAX_HISTORY_ITEMS);
       });
 
       if (source === "local") {
@@ -47,12 +63,38 @@ export default function App() {
         showToast("Explanation generated successfully!", "success");
       }
     } catch (err) {
-      console.error(err);
-      setError("Something went wrong. Please check your connection and try again.");
-      showToast("Failed to generate explanation. Please try again.", "error");
+      if (err.name === "AbortError") {
+        // User-initiated cancellation — no error state, just stop quietly.
+        showToast("Explanation cancelled.", "info");
+      } else {
+        if (import.meta.env.DEV) console.error(err);
+        setError("Something went wrong. Please check your connection and try again.");
+        showToast("Failed to generate explanation. Please try again.", "error");
+      }
     } finally {
       setLoading(false);
+      abortControllerRef.current = null;
     }
+  };
+
+  const handleCancel = () => {
+    abortControllerRef.current?.abort();
+  };
+
+  const handleRestoreHistory = (entry) => {
+    codeInputRef.current?.loadSnippet(entry.code, entry.language);
+    setResult(entry.explanation);
+    setResultSource(entry.source);
+    setError("");
+    setShowHistory(false);
+  };
+
+  const handleDeleteHistoryItem = (id) => {
+    setHistory((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const handleClearHistory = () => {
+    setHistory([]);
   };
 
   return (
@@ -64,7 +106,10 @@ export default function App() {
         <div className="absolute -bottom-40 left-1/3 w-72 h-72 bg-blue-800/10 rounded-full blur-3xl animate-pulse-glow" />
       </div>
 
-      <Header />
+      <Header
+        historyCount={history.length}
+        onOpenHistory={() => setShowHistory(true)}
+      />
 
       <main className="flex-1 px-4 py-8 sm:py-12 relative z-10">
         <div className="max-w-6xl mx-auto">
@@ -80,12 +125,16 @@ export default function App() {
               <span className="gradient-text">Code</span> Instantly
             </h2>
             <p className="text-slate-400 text-sm sm:text-base max-w-lg mx-auto">
-              Paste your code, select your level, and get AI-powered
-              explanations in seconds.
+              Paste your code and get AI-powered explanations in seconds.
             </p>
           </motion.div>
 
-          <CodeInput onExplain={handleExplain} loading={loading} />
+          <CodeInput
+            ref={codeInputRef}
+            onExplain={handleExplain}
+            onCancel={handleCancel}
+            loading={loading}
+          />
 
           <AnimatePresence>
             {loading && <Loader />}
@@ -139,8 +188,8 @@ export default function App() {
                   icon: "📋",
                 },
                 {
-                  title: "Select Level",
-                  desc: "Choose beginner, intermediate, or advanced",
+                  title: "Pick a Language",
+                  desc: "Auto-detected, or choose from 17 supported languages",
                   icon: "🎯",
                 },
                 {
@@ -193,6 +242,15 @@ export default function App() {
           />
         )}
       </AnimatePresence>
+
+      <HistoryPanel
+        open={showHistory}
+        history={history}
+        onClose={() => setShowHistory(false)}
+        onRestore={handleRestoreHistory}
+        onDelete={handleDeleteHistoryItem}
+        onClearAll={handleClearHistory}
+      />
     </div>
   );
 }
