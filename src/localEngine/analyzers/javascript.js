@@ -3,6 +3,16 @@ import { isCommentLine, commentExplanation, findCommonIssues, countUsages, gener
 export const id = "javascript";
 export const label = "JavaScript";
 
+// Function-level scoping (see shared/patterns.js computeLineScopes):
+// JS/TS-family blocks are brace-delimited. Matches both
+// `function name(...)` and `const name = (...) =>` function starts;
+// when the arrow form matches, the name lands in group 2 instead of
+// group 1 — computeLineScopes falls back to a generic scope label in
+// that case, which is fine since only uniqueness (via line index)
+// matters for isolating one function's variables from another's.
+export const scopeStyle = "brace";
+export const functionStartRegex = /^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(|^(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\(/;
+
 export function detect(code) {
   return (
     /\b(const|let|var|console\.log|=>|function)\b/.test(code) ||
@@ -22,46 +32,50 @@ function literalRole(value) {
   return "variable";
 }
 
-export function buildSymbolTable(lines, symbolTable) {
-  lines.forEach((rawLine) => {
+export function buildSymbolTable(lines, symbolTable, lineScopes = []) {
+  lines.forEach((rawLine, index) => {
     const line = rawLine.trim();
     if (!line || isCommentLine(line)) return;
 
+    const scope = lineScopes[index] || "global";
+
     const fn = line.match(/^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(([^)]*)\)/);
     if (fn) {
-      symbolTable.add(fn[1], "function", { parameters: fn[2].trim() });
-      fn[2].split(",").map((p) => p.trim().split("=")[0].trim()).filter(Boolean).forEach((p) => symbolTable.add(p, "parameter"));
+      symbolTable.add(fn[1], "function", { parameters: fn[2].trim() }, scope);
+      const fnScope = `${scope}>${fn[1]}#${index}`;
+      fn[2].split(",").map((p) => p.trim().split("=")[0].trim()).filter(Boolean).forEach((p) => symbolTable.add(p, "parameter", {}, fnScope));
     }
 
     const arrow = line.match(/^(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\(([^)]*)\)\s*=>/);
     if (arrow) {
-      symbolTable.add(arrow[1], "function", { parameters: arrow[2].trim() });
-      arrow[2].split(",").map((p) => p.trim().split("=")[0].trim()).filter(Boolean).forEach((p) => symbolTable.add(p, "parameter"));
+      symbolTable.add(arrow[1], "function", { parameters: arrow[2].trim() }, scope);
+      const fnScope = `${scope}>fn#${index}`; // matches computeLineScopes' fallback label for the arrow form
+      arrow[2].split(",").map((p) => p.trim().split("=")[0].trim()).filter(Boolean).forEach((p) => symbolTable.add(p, "parameter", {}, fnScope));
     }
 
     const cls = line.match(/\bclass\s+([A-Za-z_$][\w$]*)/);
-    if (cls) symbolTable.add(cls[1], "class");
+    if (cls) symbolTable.add(cls[1], "class", {}, scope);
 
     // for...of / for...in
     const forOf = line.match(/^for\s*\(\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s+of\s+([A-Za-z_$][\w$.]*)\s*\)/);
     if (forOf) {
       const sourceName = forOf[2].split(".")[0];
-      const sourceInfo = symbolTable.get(sourceName);
-      symbolTable.add(forOf[1], "loop-item", { of: sourceName, ofType: sourceInfo ? sourceInfo.role : "collection" });
+      const sourceInfo = symbolTable.get(sourceName, scope);
+      symbolTable.add(forOf[1], "loop-item", { of: sourceName, ofType: sourceInfo ? sourceInfo.role : "collection" }, scope);
     }
 
     // array.forEach((item) => ...) or (item, index) => ...
     const forEach = line.match(/([A-Za-z_$][\w$]*)\.forEach\s*\(\s*(?:\(([^)]*)\)|([A-Za-z_$][\w$]*))\s*=>/);
     if (forEach) {
       const sourceName = forEach[1];
-      const sourceInfo = symbolTable.get(sourceName);
+      const sourceInfo = symbolTable.get(sourceName, scope);
       const params = (forEach[2] ?? forEach[3] ?? "").split(",").map((p) => p.trim()).filter(Boolean);
-      if (params[0]) symbolTable.add(params[0], "loop-item", { of: sourceName, ofType: sourceInfo ? sourceInfo.role : "array" });
+      if (params[0]) symbolTable.add(params[0], "loop-item", { of: sourceName, ofType: sourceInfo ? sourceInfo.role : "array" }, scope);
     }
 
     const assign = line.match(/^(?:export\s+)?(const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(.+?);?$/);
     if (assign) {
-      symbolTable.add(assign[2], literalRole(assign[3]), { keyword: assign[1] });
+      symbolTable.add(assign[2], literalRole(assign[3]), { keyword: assign[1] }, scope);
     }
   });
 
@@ -104,7 +118,7 @@ export function analyzeStructure(lines) {
   return result;
 }
 
-export function explainLine(rawLine, symbolTable) {
+export function explainLine(rawLine, symbolTable, scope = "global") {
   const trimmed = rawLine.trim();
   if (!trimmed) return null;
   if (isCommentLine(trimmed)) return commentExplanation();
@@ -135,7 +149,7 @@ export function explainLine(rawLine, symbolTable) {
   const forOf = trimmed.match(/^for\s*\(\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s+of\s+([A-Za-z_$][\w$.]*)\s*\)/);
   if (forOf) {
     const sourceName = forOf[2].split(".")[0];
-    const info = symbolTable.get(sourceName);
+    const info = symbolTable.get(sourceName, scope);
     const phrase = info && info.role === "list" ? `the \`${sourceName}\` array` : `\`${sourceName}\``;
     return `Iterates over ${phrase}; on each pass, \`${forOf[1]}\` represents the current item.`;
   }
@@ -143,7 +157,7 @@ export function explainLine(rawLine, symbolTable) {
   const forEach = trimmed.match(/([A-Za-z_$][\w$]*)\.forEach\s*\(\s*(?:\(([^)]*)\)|([A-Za-z_$][\w$]*))\s*=>/);
   if (forEach) {
     const params = (forEach[2] ?? forEach[3] ?? "").split(",").map((p) => p.trim());
-    const info = symbolTable.get(forEach[1]);
+    const info = symbolTable.get(forEach[1], scope);
     const phrase = info && info.role === "list" ? `the \`${forEach[1]}\` array` : `\`${forEach[1]}\``;
     return `Loops over ${phrase} using \`.forEach()\`; \`${params[0]}\` represents the current item on each pass.`;
   }
@@ -161,9 +175,9 @@ export function explainLine(rawLine, symbolTable) {
   const ifMatch = trimmed.match(/^if\s*\((.+)\)\s*\{?$/);
   if (ifMatch) {
     const condition = ifMatch[1].trim();
-    const known = symbolTable.knownIdentifiersIn(condition);
+    const known = symbolTable.knownIdentifiersIn(condition, scope);
     if (known.length === 1 && condition === known[0]) {
-      return `Checks whether ${symbolTable.describe(known[0])} is truthy before running the code that follows.`;
+      return `Checks whether ${symbolTable.describe(known[0], scope)} is truthy before running the code that follows.`;
     }
     return `Checks whether \`${condition}\` is true before running the code that follows.`;
   }
@@ -176,23 +190,23 @@ export function explainLine(rawLine, symbolTable) {
   if (ret) {
     const value = ret[1].trim();
     if (!value) return "Returns control from the current function without a value.";
-    const known = symbolTable.knownIdentifiersIn(value);
-    if (known.length === 1 && value === known[0]) return `Returns ${symbolTable.describe(known[0])} from the current function.`;
+    const known = symbolTable.knownIdentifiersIn(value, scope);
+    if (known.length === 1 && value === known[0]) return `Returns ${symbolTable.describe(known[0], scope)} from the current function.`;
     return `Returns \`${value}\` from the current function.`;
   }
 
   const log = trimmed.match(/\bconsole\.log\s*\((.*)\)\s*;?$/);
   if (log) {
     const arg = log[1].trim();
-    const known = symbolTable.knownIdentifiersIn(arg);
-    if (known.length === 1 && arg === known[0]) return `Displays ${symbolTable.describe(known[0])} in the browser/console.`;
+    const known = symbolTable.knownIdentifiersIn(arg, scope);
+    if (known.length === 1 && arg === known[0]) return `Displays ${symbolTable.describe(known[0], scope)} in the browser/console.`;
     return arg ? `Displays \`${arg}\` in the browser/console.` : "Prints a blank line to the console.";
   }
 
   const declared = trimmed.match(/^(?:export\s+)?(const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(.+?);?$/);
   if (declared) {
     const [, keyword, name, value] = declared;
-    const info = symbolTable.get(name);
+    const info = symbolTable.get(name, scope);
     if (info && info.role === "list") return `Creates the \`${keyword}\` array \`${name}\` containing \`${value}\`.`;
     if (info && info.role === "dict") return `Creates the \`${keyword}\` object \`${name}\` with the properties \`${value}\`.`;
     return `Declares the \`${keyword}\` variable \`${name}\` and assigns it \`${value}\`.`;
@@ -200,7 +214,7 @@ export function explainLine(rawLine, symbolTable) {
 
   const call = trimmed.match(/^([A-Za-z_$][\w$]*)\s*\((.*)\)\s*;?$/);
   if (call) {
-    const info = symbolTable.get(call[1]);
+    const info = symbolTable.get(call[1], scope);
     const label = info && info.role === "function" ? `the \`${call[1]}()\` function defined above` : `\`${call[1]}()\``;
     return call[2].trim() ? `Calls ${label} with the provided argument(s).` : `Calls ${label} without arguments.`;
   }
@@ -232,8 +246,9 @@ export function findIssues(lines, symbolTable) {
     }
   });
 
-  symbolTable.symbols.forEach((info, name) => {
+  symbolTable.symbols.forEach((info) => {
     if (info.role === "parameter" || info.role === "loop-item") return;
+    const name = info.name;
     if (countUsages(lines, name) <= 1) {
       const defLine = lines.findIndex((l) => new RegExp(`\\b${name}\\b`).test(l));
       issues.push({ line: defLine + 1, type: "review", message: `Variable \`${name}\` appears to be declared but may not be used later.` });

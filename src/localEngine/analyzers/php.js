@@ -3,6 +3,11 @@ import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExp
 export const id = "php";
 export const label = "PHP";
 
+// Function-level scoping (see shared/patterns.js computeLineScopes):
+// PHP function bodies are brace-delimited.
+export const scopeStyle = "brace";
+export const functionStartRegex = /^function\s+([A-Za-z_]\w*)/;
+
 function article(word) {
   return /^[aeiou]/i.test(word) ? "an" : "a";
 }
@@ -10,8 +15,8 @@ function article(word) {
 // PHP identifiers are stored in the shared symbol table without their
 // `$` sigil (so lookups work like every other language), but PHP code
 // should always be *displayed* with `$` — this rebuilds that phrasing.
-function phpDescribe(name, symbolTable) {
-  const info = symbolTable.get(name);
+function phpDescribe(name, symbolTable, scope = "global") {
+  const info = symbolTable.get(name, scope);
   if (!info) return `\`$${name}\``;
 
   switch (info.role) {
@@ -44,28 +49,31 @@ function literalRole(value) {
   return "variable";
 }
 
-export function buildSymbolTable(lines, symbolTable) {
-  lines.forEach((rawLine) => {
+export function buildSymbolTable(lines, symbolTable, lineScopes = []) {
+  lines.forEach((rawLine, index) => {
     const line = rawLine.trim();
     if (!line || isCommentLine(line)) return;
 
+    const scope = lineScopes[index] || "global";
+
     const fn = line.match(/^function\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/);
     if (fn) {
-      symbolTable.add(fn[1], "function", { parameters: fn[2].trim() });
-      (fn[2].match(/\$[A-Za-z_]\w*/g) || []).forEach((p) => symbolTable.add(p.slice(1), "parameter"));
+      symbolTable.add(fn[1], "function", { parameters: fn[2].trim() }, scope);
+      const fnScope = `${scope}>${fn[1]}#${index}`;
+      (fn[2].match(/\$[A-Za-z_]\w*/g) || []).forEach((p) => symbolTable.add(p.slice(1), "parameter", {}, fnScope));
     }
 
     const cls = line.match(/\bclass\s+([A-Za-z_]\w*)/);
-    if (cls) symbolTable.add(cls[1], "class");
+    if (cls) symbolTable.add(cls[1], "class", {}, scope);
 
     const decl = line.match(/^\$([A-Za-z_]\w*)\s*=\s*(.+);/);
-    if (decl) symbolTable.add(decl[1], literalRole(decl[2]));
+    if (decl) symbolTable.add(decl[1], literalRole(decl[2]), {}, scope);
 
     // foreach ($items as $item)
     const forEach = line.match(/^foreach\s*\(\s*\$([A-Za-z_]\w*)\s+as\s+\$([A-Za-z_]\w*)\s*\)/);
     if (forEach) {
-      const info = symbolTable.get(forEach[1]);
-      symbolTable.add(forEach[2], "loop-item", { of: forEach[1], ofType: info ? info.role : "array" });
+      const info = symbolTable.get(forEach[1], scope);
+      symbolTable.add(forEach[2], "loop-item", { of: forEach[1], ofType: info ? info.role : "array" }, scope);
     }
   });
 
@@ -100,7 +108,7 @@ export function analyzeStructure(lines) {
   return result;
 }
 
-export function explainLine(rawLine, symbolTable) {
+export function explainLine(rawLine, symbolTable, scope = "global") {
   const trimmed = rawLine.trim();
   if (!trimmed) return null;
   if (isCommentLine(trimmed)) return commentExplanation();
@@ -120,7 +128,7 @@ export function explainLine(rawLine, symbolTable) {
 
   const forEach = trimmed.match(/^foreach\s*\(\s*\$([A-Za-z_]\w*)\s+as\s+\$([A-Za-z_]\w*)\s*\)/);
   if (forEach) {
-    const info = symbolTable.get(forEach[1]);
+    const info = symbolTable.get(forEach[1], scope);
     const phrase = info && info.role === "list" ? `the \`$${forEach[1]}\` array` : `\`$${forEach[1]}\``;
     return `Iterates over ${phrase}; on each pass, \`$${forEach[2]}\` represents the current item.`;
   }
@@ -130,8 +138,8 @@ export function explainLine(rawLine, symbolTable) {
   const ifMatch = trimmed.match(/^if\s*\((.+)\)\s*\{?$/);
   if (ifMatch) {
     const condition = ifMatch[1].trim();
-    const known = symbolTable.knownIdentifiersIn(condition.replace(/\$/g, ""));
-    if (known.length === 1 && condition.replace(/\$/g, "") === known[0]) return `Checks whether ${phpDescribe(known[0], symbolTable)} is truthy before running the code that follows.`;
+    const known = symbolTable.knownIdentifiersIn(condition.replace(/\$/g, ""), scope);
+    if (known.length === 1 && condition.replace(/\$/g, "") === known[0]) return `Checks whether ${phpDescribe(known[0], symbolTable, scope)} is truthy before running the code that follows.`;
     return `Checks whether \`${condition}\` is true before running the code that follows.`;
   }
   if (/^\}?\s*else\b/.test(trimmed)) return "Defines the alternative block that runs when the previous condition is false.";
@@ -144,14 +152,14 @@ export function explainLine(rawLine, symbolTable) {
 
   const decl = trimmed.match(/^\$([A-Za-z_]\w*)\s*=\s*(.+);/);
   if (decl) {
-    const info = symbolTable.get(decl[1]);
+    const info = symbolTable.get(decl[1], scope);
     if (info && info.role === "list") return `Creates the array \`$${decl[1]}\` containing \`${decl[2]}\`.`;
     return `Assigns \`${decl[2]}\` to the variable \`$${decl[1]}\`.`;
   }
 
   const call = trimmed.match(/^([A-Za-z_]\w*)\s*\((.*)\)\s*;?$/);
   if (call) {
-    const info = symbolTable.get(call[1]);
+    const info = symbolTable.get(call[1], scope);
     const label = info && info.role === "function" ? `the \`${call[1]}()\` function defined above` : `\`${call[1]}()\``;
     return call[2].trim() ? `Calls ${label} with the provided argument(s).` : `Calls ${label} without arguments.`;
   }

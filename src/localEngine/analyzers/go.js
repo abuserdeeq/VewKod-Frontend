@@ -3,6 +3,11 @@ import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExp
 export const id = "go";
 export const label = "Go";
 
+// Function-level scoping (see shared/patterns.js computeLineScopes):
+// Go function bodies are brace-delimited.
+export const scopeStyle = "brace";
+export const functionStartRegex = /^func\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)\s*\(/;
+
 export function detect(code) {
   return /^\s*package\s+\w+/m.test(code) || /\bfunc\s+main\s*\(\s*\)/.test(code) || /\bfmt\.(Println|Printf|Print)\s*\(/.test(code);
 }
@@ -17,35 +22,42 @@ function literalRole(value) {
   return "variable";
 }
 
-export function buildSymbolTable(lines, symbolTable) {
-  lines.forEach((rawLine) => {
+export function buildSymbolTable(lines, symbolTable, lineScopes = []) {
+  lines.forEach((rawLine, index) => {
     const line = rawLine.trim();
     if (!line || isCommentLine(line)) return;
 
+    const scope = lineScopes[index] || "global";
+
     const fn = line.match(/^func\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)\s*\(([^)]*)\)/);
-    if (fn) symbolTable.add(fn[1], "function", { parameters: fn[2].trim() });
+    if (fn) {
+      symbolTable.add(fn[1], "function", { parameters: fn[2].trim() }, scope);
+      const fnScope = `${scope}>${fn[1]}#${index}`;
+      // Go params look like "a, b int" or "a int, b string" — grab identifiers before each type.
+      fn[2].split(",").map((p) => p.trim().split(/\s+/)[0]).filter(Boolean).forEach((p) => symbolTable.add(p, "parameter", {}, fnScope));
+    }
 
     const shortDecl = line.match(/^([A-Za-z_]\w*)\s*:=\s*(.+)$/);
-    if (shortDecl) symbolTable.add(shortDecl[1], literalRole(shortDecl[2]));
+    if (shortDecl) symbolTable.add(shortDecl[1], literalRole(shortDecl[2]), {}, scope);
 
     const multiDecl = line.match(/^([A-Za-z_]\w*)\s*,\s*([A-Za-z_]\w*)\s*:=\s*(.+)$/);
     if (multiDecl) {
-      symbolTable.add(multiDecl[1], "variable");
-      symbolTable.add(multiDecl[2], multiDecl[2] === "err" ? "variable" : "variable");
+      symbolTable.add(multiDecl[1], "variable", {}, scope);
+      symbolTable.add(multiDecl[2], "variable", {}, scope);
     }
 
     const varDecl = line.match(/^var\s+([A-Za-z_]\w*)\s+(\[\]\w+|map\[\w+\]\w+|\w+)/);
     if (varDecl) {
       const t = varDecl[2];
       const role = t.startsWith("[]") ? "list" : t.startsWith("map[") ? "dict" : t === "string" ? "string" : t === "bool" ? "boolean" : "number";
-      symbolTable.add(varDecl[1], role);
+      symbolTable.add(varDecl[1], role, {}, scope);
     }
 
     // for _, item := range items  OR  for i, item := range items
     const rangeLoop = line.match(/^for\s+(?:([A-Za-z_]\w*)\s*,\s*)?([A-Za-z_]\w*)\s*:=\s*range\s+([A-Za-z_]\w*)/);
     if (rangeLoop) {
-      const info = symbolTable.get(rangeLoop[3]);
-      symbolTable.add(rangeLoop[2], "loop-item", { of: rangeLoop[3], ofType: info ? info.role : "collection" });
+      const info = symbolTable.get(rangeLoop[3], scope);
+      symbolTable.add(rangeLoop[2], "loop-item", { of: rangeLoop[3], ofType: info ? info.role : "collection" }, scope);
     }
   });
 
@@ -80,7 +92,7 @@ export function analyzeStructure(lines) {
   return result;
 }
 
-export function explainLine(rawLine, symbolTable) {
+export function explainLine(rawLine, symbolTable, scope = "global") {
   const trimmed = rawLine.trim();
   if (!trimmed) return null;
   if (isCommentLine(trimmed)) return commentExplanation();
@@ -101,7 +113,7 @@ export function explainLine(rawLine, symbolTable) {
 
   const rangeLoop = trimmed.match(/^for\s+(?:([A-Za-z_]\w*)\s*,\s*)?([A-Za-z_]\w*)\s*:=\s*range\s+([A-Za-z_]\w*)/);
   if (rangeLoop) {
-    const info = symbolTable.get(rangeLoop[3]);
+    const info = symbolTable.get(rangeLoop[3], scope);
     const phrase = info && info.role === "list" ? `the \`${rangeLoop[3]}\` slice` : `\`${rangeLoop[3]}\``;
     return `Iterates over ${phrase}; on each pass, \`${rangeLoop[2]}\` represents the current item.`;
   }
@@ -110,8 +122,8 @@ export function explainLine(rawLine, symbolTable) {
   const ifMatch = trimmed.match(/^if\s+(.+?)\s*\{?$/);
   if (ifMatch) {
     const condition = ifMatch[1].trim();
-    const known = symbolTable.knownIdentifiersIn(condition);
-    if (known.length === 1 && condition === known[0]) return `Checks whether ${symbolTable.describe(known[0])} meets the condition before running the code that follows.`;
+    const known = symbolTable.knownIdentifiersIn(condition, scope);
+    if (known.length === 1 && condition === known[0]) return `Checks whether ${symbolTable.describe(known[0], scope)} meets the condition before running the code that follows.`;
     return `Checks whether \`${condition}\` is true before running the code that follows.`;
   }
   if (/^\}?\s*else\b/.test(trimmed)) return "Defines the alternative block that runs when the previous condition is false.";

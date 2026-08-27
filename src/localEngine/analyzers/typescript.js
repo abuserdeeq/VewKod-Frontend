@@ -4,6 +4,10 @@ import { isCommentLine, commentExplanation, genericFallbackExplanation } from ".
 export const id = "typescript";
 export const label = "TypeScript";
 
+// Reuse JavaScript's brace-based scoping — same block structure.
+export const scopeStyle = "brace";
+export const functionStartRegex = js.functionStartRegex;
+
 export function detect(code) {
   return (
     /\b(interface|type)\s+\w+/.test(code) ||
@@ -11,18 +15,20 @@ export function detect(code) {
   );
 }
 
-export function buildSymbolTable(lines, symbolTable) {
-  js.buildSymbolTable(lines, symbolTable);
+export function buildSymbolTable(lines, symbolTable, lineScopes = []) {
+  js.buildSymbolTable(lines, symbolTable, lineScopes);
 
-  lines.forEach((rawLine) => {
+  lines.forEach((rawLine, index) => {
     const line = rawLine.trim();
     if (!line || isCommentLine(line)) return;
 
+    const scope = lineScopes[index] || "global";
+
     const iface = line.match(/^(?:export\s+)?interface\s+([A-Za-z_$][\w$]*)/);
-    if (iface) symbolTable.add(iface[1], "class", { kind: "interface" });
+    if (iface) symbolTable.add(iface[1], "class", { kind: "interface" }, scope);
 
     const typeAlias = line.match(/^(?:export\s+)?type\s+([A-Za-z_$][\w$]*)\s*=/);
-    if (typeAlias) symbolTable.add(typeAlias[1], "class", { kind: "type alias" });
+    if (typeAlias) symbolTable.add(typeAlias[1], "class", { kind: "type alias" }, scope);
 
     // typed declaration: const x: number = 5;
     const typed = line.match(/^(?:export\s+)?(const|let|var)\s+([A-Za-z_$][\w$]*)\s*:\s*([\w<>\[\]| ]+?)\s*=/);
@@ -30,7 +36,7 @@ export function buildSymbolTable(lines, symbolTable) {
       const tsType = typed[3].trim();
       const roleMap = { string: "string", number: "number", boolean: "boolean" };
       const role = roleMap[tsType] || (tsType.endsWith("[]") ? "list" : "variable");
-      symbolTable.add(typed[2], role, { tsType });
+      symbolTable.add(typed[2], role, { tsType }, scope);
     }
   });
 
@@ -48,7 +54,7 @@ export function analyzeStructure(lines) {
   return structure;
 }
 
-export function explainLine(rawLine, symbolTable) {
+export function explainLine(rawLine, symbolTable, scope = "global") {
   const trimmed = rawLine.trim();
   if (!trimmed) return null;
   if (isCommentLine(trimmed)) return commentExplanation();
@@ -64,7 +70,7 @@ export function explainLine(rawLine, symbolTable) {
     return `Declares the \`${typed[1]}\` variable \`${typed[2]}\` with type \`${typed[3].trim()}\` and assigns it \`${typed[4]}\`.`;
   }
 
-  const result = js.explainLine(rawLine, symbolTable);
+  const result = js.explainLine(rawLine, symbolTable, scope);
   return result || genericFallbackExplanation();
 }
 

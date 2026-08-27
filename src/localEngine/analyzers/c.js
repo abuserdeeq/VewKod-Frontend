@@ -3,31 +3,40 @@ import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExp
 export const id = "c";
 export const label = "C";
 
+// Function-level scoping (see shared/patterns.js computeLineScopes):
+// C function bodies are brace-delimited.
+export const scopeStyle = "brace";
+export const functionStartRegex = /^(?:static\s+)?[\w]+\s*\*?\s*([A-Za-z_]\w*)\s*\(/;
+
 export function detect(code) {
   return /#include\s*<.*\.h>/.test(code) || /\bprintf\s*\(/.test(code) || /#include\s*<stdio\.h>/.test(code);
 }
 
-export function buildSymbolTable(lines, symbolTable) {
-  lines.forEach((rawLine) => {
+export function buildSymbolTable(lines, symbolTable, lineScopes = []) {
+  lines.forEach((rawLine, index) => {
     const line = rawLine.trim();
     if (!line || isCommentLine(line)) return;
 
+    const scope = lineScopes[index] || "global";
+
     const fn = line.match(/^(?:static\s+)?[\w]+\s*\*?\s*([A-Za-z_]\w*)\s*\(([^)]*)\)\s*\{?$/);
     if (fn && !/\b(if|for|while|switch|return)\b/.test(line)) {
-      symbolTable.add(fn[1], "function", { parameters: fn[2].trim() });
+      symbolTable.add(fn[1], "function", { parameters: fn[2].trim() }, scope);
+      const fnScope = `${scope}>${fn[1]}#${index}`;
+      fn[2].split(",").map((p) => p.trim().split(/[\s*]+/).pop()).filter(Boolean).forEach((p) => symbolTable.add(p, "parameter", {}, fnScope));
     }
 
     const pointer = line.match(/^\w+\s*\*\s*([A-Za-z_]\w*)\s*=/);
-    if (pointer) symbolTable.add(pointer[1], "pointer");
+    if (pointer) symbolTable.add(pointer[1], "pointer", {}, scope);
 
     const decl = line.match(/^(int|char|float|double|long|short)\s+([A-Za-z_]\w*)\s*=\s*(.+);/);
     if (decl) {
       const role = decl[1] === "char" ? "string" : "number";
-      symbolTable.add(decl[2], role);
+      symbolTable.add(decl[2], role, {}, scope);
     }
 
     const arrayDecl = line.match(/^\w+\s+([A-Za-z_]\w*)\s*\[\s*\d*\s*\]/);
-    if (arrayDecl) symbolTable.add(arrayDecl[1], "list");
+    if (arrayDecl) symbolTable.add(arrayDecl[1], "list", {}, scope);
   });
 
   return symbolTable;
@@ -58,7 +67,7 @@ export function analyzeStructure(lines) {
   return result;
 }
 
-export function explainLine(rawLine, symbolTable) {
+export function explainLine(rawLine, symbolTable, scope = "global") {
   const trimmed = rawLine.trim();
   if (!trimmed) return null;
   if (isCommentLine(trimmed)) return commentExplanation();
@@ -80,8 +89,8 @@ export function explainLine(rawLine, symbolTable) {
 
   const ifMatch = trimmed.match(/^if\s*\((.+)\)\s*\{?$/);
   if (ifMatch) {
-    const known = symbolTable.knownIdentifiersIn(ifMatch[1]);
-    if (known.length === 1 && ifMatch[1].trim() === known[0]) return `Checks whether ${symbolTable.describe(known[0])} is non-zero before running the code that follows.`;
+    const known = symbolTable.knownIdentifiersIn(ifMatch[1], scope);
+    if (known.length === 1 && ifMatch[1].trim() === known[0]) return `Checks whether ${symbolTable.describe(known[0], scope)} is non-zero before running the code that follows.`;
     return `Checks whether \`${ifMatch[1].trim()}\` is true before running the code that follows.`;
   }
   if (/^else\b/.test(trimmed)) return "Defines the alternative block that runs when the previous condition is false.";

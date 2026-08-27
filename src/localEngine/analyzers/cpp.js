@@ -3,38 +3,49 @@ import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExp
 export const id = "cpp";
 export const label = "C++";
 
+// Function-level scoping (see shared/patterns.js computeLineScopes):
+// C++ function bodies are brace-delimited.
+export const scopeStyle = "brace";
+export const functionStartRegex = /^(?:static\s+)?[\w:<>]+\s*&?\s*([A-Za-z_]\w*)\s*\(/;
+
 export function detect(code) {
   return /\b(std::|cout|cin|vector<|namespace)\b/.test(code) || /#include\s*<(iostream|vector|string|map)>/.test(code);
 }
 
-export function buildSymbolTable(lines, symbolTable) {
-  lines.forEach((rawLine) => {
+export function buildSymbolTable(lines, symbolTable, lineScopes = []) {
+  lines.forEach((rawLine, index) => {
     const line = rawLine.trim();
     if (!line || isCommentLine(line)) return;
 
+    const scope = lineScopes[index] || "global";
+
     const cls = line.match(/\bclass\s+([A-Za-z_]\w*)/);
-    if (cls) symbolTable.add(cls[1], "class");
+    if (cls) symbolTable.add(cls[1], "class", {}, scope);
 
     const fn = line.match(/^(?:static\s+)?[\w:<>]+\s*&?\s*([A-Za-z_]\w*)\s*\(([^)]*)\)\s*\{?$/);
-    if (fn && !/\b(if|for|while|switch)\b/.test(line)) symbolTable.add(fn[1], "function", { parameters: fn[2].trim() });
+    if (fn && !/\b(if|for|while|switch)\b/.test(line)) {
+      symbolTable.add(fn[1], "function", { parameters: fn[2].trim() }, scope);
+      const fnScope = `${scope}>${fn[1]}#${index}`;
+      fn[2].split(",").map((p) => p.trim().split(/[\s&*]+/).pop()).filter(Boolean).forEach((p) => symbolTable.add(p, "parameter", {}, fnScope));
+    }
 
     const vec = line.match(/(?:std::)?vector\s*<[^>]*>\s*&?\s*([A-Za-z_]\w*)\s*[=({]/);
-    if (vec) symbolTable.add(vec[1], "list");
+    if (vec) symbolTable.add(vec[1], "list", {}, scope);
 
     const map = line.match(/(?:std::)?map\s*<[^>]*>\s*&?\s*([A-Za-z_]\w*)\s*[=({]/);
-    if (map) symbolTable.add(map[1], "dict");
+    if (map) symbolTable.add(map[1], "dict", {}, scope);
 
     const decl = line.match(/^(int|double|float|char|bool|string|std::string)\s+([A-Za-z_]\w*)\s*=\s*(.+);/);
     if (decl) {
       const roleMap = { int: "number", double: "number", float: "number", bool: "boolean", char: "string", string: "string", "std::string": "string" };
-      symbolTable.add(decl[2], roleMap[decl[1]] || "variable");
+      symbolTable.add(decl[2], roleMap[decl[1]] || "variable", {}, scope);
     }
 
     // range-based for: for (auto& item : items) / for (Type item : items)
     const forRange = line.match(/^for\s*\(\s*(?:auto|[\w:<>]+)\s*&?\s*([A-Za-z_]\w*)\s*:\s*([A-Za-z_]\w*)\s*\)/);
     if (forRange) {
-      const info = symbolTable.get(forRange[2]);
-      symbolTable.add(forRange[1], "loop-item", { of: forRange[2], ofType: info ? info.role : "collection" });
+      const info = symbolTable.get(forRange[2], scope);
+      symbolTable.add(forRange[1], "loop-item", { of: forRange[2], ofType: info ? info.role : "collection" }, scope);
     }
   });
 
@@ -66,7 +77,7 @@ export function analyzeStructure(lines) {
   return result;
 }
 
-export function explainLine(rawLine, symbolTable) {
+export function explainLine(rawLine, symbolTable, scope = "global") {
   const trimmed = rawLine.trim();
   if (!trimmed) return null;
   if (isCommentLine(trimmed)) return commentExplanation();
@@ -79,7 +90,7 @@ export function explainLine(rawLine, symbolTable) {
 
   const forRange = trimmed.match(/^for\s*\(\s*(?:auto|[\w:<>]+)\s*&?\s*([A-Za-z_]\w*)\s*:\s*([A-Za-z_]\w*)\s*\)/);
   if (forRange) {
-    const info = symbolTable.get(forRange[2]);
+    const info = symbolTable.get(forRange[2], scope);
     const phrase = info && info.role === "list" ? `the \`${forRange[2]}\` vector` : `\`${forRange[2]}\``;
     return `Iterates over ${phrase}; on each pass, \`${forRange[1]}\` represents the current item.`;
   }
@@ -89,8 +100,8 @@ export function explainLine(rawLine, symbolTable) {
 
   const ifMatch = trimmed.match(/^if\s*\((.+)\)\s*\{?$/);
   if (ifMatch) {
-    const known = symbolTable.knownIdentifiersIn(ifMatch[1]);
-    if (known.length === 1 && ifMatch[1].trim() === known[0]) return `Checks whether ${symbolTable.describe(known[0])} is true before running the code that follows.`;
+    const known = symbolTable.knownIdentifiersIn(ifMatch[1], scope);
+    if (known.length === 1 && ifMatch[1].trim() === known[0]) return `Checks whether ${symbolTable.describe(known[0], scope)} is true before running the code that follows.`;
     return `Checks whether \`${ifMatch[1].trim()}\` is true before running the code that follows.`;
   }
   if (/^else\b/.test(trimmed)) return "Defines the alternative block that runs when the previous condition is false.";

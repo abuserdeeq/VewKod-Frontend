@@ -3,6 +3,13 @@ import { findCommonIssues, genericFallbackExplanation } from "../shared/patterns
 export const id = "bash";
 export const label = "Bash";
 
+// Function-level scoping (see shared/patterns.js computeLineScopes):
+// Bash functions are brace-delimited (`name() { ... }`); if/for/while
+// use fi/done, but those aren't function boundaries so they don't
+// need their own scope — only `{`/`}` nesting is tracked.
+export const scopeStyle = "brace";
+export const functionStartRegex = /^(?:function\s+)?([A-Za-z_]\w*)\s*\(\)/;
+
 export function detect(code) {
   // Shebang is the strongest signal. Otherwise require shell-specific
   // block terminators (`fi`/`done`) rather than just `echo` + `$var`,
@@ -22,24 +29,26 @@ function literalRole(value) {
   return "variable";
 }
 
-export function buildSymbolTable(lines, symbolTable) {
-  lines.forEach((rawLine) => {
+export function buildSymbolTable(lines, symbolTable, lineScopes = []) {
+  lines.forEach((rawLine, index) => {
     const line = rawLine.trim();
     if (!line || isCommentLine(line)) return;
 
+    const scope = lineScopes[index] || "global";
+
     const fn = line.match(/^(?:function\s+)?([A-Za-z_]\w*)\s*\(\)\s*\{?$/);
-    if (fn) symbolTable.add(fn[1], "function");
+    if (fn) symbolTable.add(fn[1], "function", {}, scope);
 
     const decl = line.match(/^([A-Za-z_]\w*)=(.+)$/);
-    if (decl) symbolTable.add(decl[1], literalRole(decl[2]));
+    if (decl) symbolTable.add(decl[1], literalRole(decl[2]), {}, scope);
 
     // for item in list; do
     const forLoop = line.match(/^for\s+([A-Za-z_]\w*)\s+in\s+([^;]+);?\s*do?$/);
     if (forLoop) {
       const sourceExpr = forLoop[2].trim();
       const sourceName = sourceExpr.replace(/[${}]/g, "").split(/\s|\[/)[0];
-      const info = symbolTable.get(sourceName);
-      symbolTable.add(forLoop[1], "loop-item", { of: sourceName, ofType: info ? info.role : "list" });
+      const info = symbolTable.get(sourceName, scope);
+      symbolTable.add(forLoop[1], "loop-item", { of: sourceName, ofType: info ? info.role : "list" }, scope);
     }
   });
 
@@ -70,7 +79,7 @@ export function analyzeStructure(lines) {
   return result;
 }
 
-export function explainLine(rawLine, symbolTable) {
+export function explainLine(rawLine, symbolTable, scope = "global") {
   const trimmed = rawLine.trim();
   if (!trimmed) return null;
   if (trimmed.startsWith("#!")) return "The shebang line — tells the OS which interpreter should run this script.";
@@ -97,7 +106,7 @@ export function explainLine(rawLine, symbolTable) {
   if (echo) {
     const arg = echo[1].trim();
     const varMatch = arg.match(/^"?\$\{?([A-Za-z_]\w*)\}?"?$/);
-    if (varMatch && symbolTable.has(varMatch[1])) return `Prints ${symbolTable.describe(varMatch[1])} to the terminal.`;
+    if (varMatch && symbolTable.has(varMatch[1], scope)) return `Prints ${symbolTable.describe(varMatch[1], scope)} to the terminal.`;
     return `Prints \`${arg}\` to the terminal.`;
   }
 

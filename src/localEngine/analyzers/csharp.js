@@ -3,6 +3,11 @@ import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExp
 export const id = "csharp";
 export const label = "C#";
 
+// Function-level scoping (see shared/patterns.js computeLineScopes):
+// C# method bodies are brace-delimited.
+export const scopeStyle = "brace";
+export const functionStartRegex = /^(?:public|private|protected|internal)?\s*(?:static\s+)?[\w<>\[\], ]+\s+([A-Za-z_]\w*)\s*\(/;
+
 export function detect(code) {
   return /\busing\s+System\b/.test(code) || /\bConsole\.(Write|WriteLine)\s*\(/.test(code) || /\bnamespace\s+\w+/.test(code);
 }
@@ -20,24 +25,30 @@ function typeRole(type) {
   return "variable";
 }
 
-export function buildSymbolTable(lines, symbolTable) {
-  lines.forEach((rawLine) => {
+export function buildSymbolTable(lines, symbolTable, lineScopes = []) {
+  lines.forEach((rawLine, index) => {
     const line = rawLine.trim();
     if (!line || isCommentLine(line)) return;
 
+    const scope = lineScopes[index] || "global";
+
     const cls = line.match(/\bclass\s+([A-Za-z_]\w*)/);
-    if (cls) symbolTable.add(cls[1], "class");
+    if (cls) symbolTable.add(cls[1], "class", {}, scope);
 
     const method = line.match(/^(?:public|private|protected|internal)?\s*(?:static\s+)?[\w<>\[\], ]+\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*\{?$/);
-    if (method && !/\b(if|for|foreach|while|switch)\b/.test(line)) symbolTable.add(method[1], "function", { parameters: method[2].trim() });
+    if (method && !/\b(if|for|foreach|while|switch)\b/.test(line)) {
+      symbolTable.add(method[1], "function", { parameters: method[2].trim() }, scope);
+      const fnScope = `${scope}>${method[1]}#${index}`;
+      method[2].split(",").map((p) => p.trim().split(/\s+/).pop()).filter(Boolean).forEach((p) => symbolTable.add(p, "parameter", {}, fnScope));
+    }
 
     const decl = line.match(/^(?:public|private|protected|internal)?\s*(?:static\s+)?(?:readonly\s+)?([\w<>\[\], ]+?)\s+([A-Za-z_]\w*)\s*=\s*(.+);/);
-    if (decl) symbolTable.add(decl[2], decl[1].trim() === "var" ? "variable" : typeRole(decl[1]));
+    if (decl) symbolTable.add(decl[2], decl[1].trim() === "var" ? "variable" : typeRole(decl[1]), {}, scope);
 
     const forEach = line.match(/^foreach\s*\(\s*(?:var|[\w<>\[\]]+)\s+([A-Za-z_]\w*)\s+in\s+([A-Za-z_]\w*)\s*\)/);
     if (forEach) {
-      const info = symbolTable.get(forEach[2]);
-      symbolTable.add(forEach[1], "loop-item", { of: forEach[2], ofType: info ? info.role : "collection" });
+      const info = symbolTable.get(forEach[2], scope);
+      symbolTable.add(forEach[1], "loop-item", { of: forEach[2], ofType: info ? info.role : "collection" }, scope);
     }
   });
 
@@ -69,7 +80,7 @@ export function analyzeStructure(lines) {
   return result;
 }
 
-export function explainLine(rawLine, symbolTable) {
+export function explainLine(rawLine, symbolTable, scope = "global") {
   const trimmed = rawLine.trim();
   if (!trimmed) return null;
   if (isCommentLine(trimmed)) return commentExplanation();
@@ -89,7 +100,7 @@ export function explainLine(rawLine, symbolTable) {
 
   const forEach = trimmed.match(/^foreach\s*\(\s*(?:var|[\w<>\[\]]+)\s+([A-Za-z_]\w*)\s+in\s+([A-Za-z_]\w*)\s*\)/);
   if (forEach) {
-    const info = symbolTable.get(forEach[2]);
+    const info = symbolTable.get(forEach[2], scope);
     const phrase = info && info.role === "list" ? `the \`${forEach[2]}\` collection` : `\`${forEach[2]}\``;
     return `Iterates over ${phrase}; on each pass, \`${forEach[1]}\` represents the current item.`;
   }
@@ -99,8 +110,8 @@ export function explainLine(rawLine, symbolTable) {
 
   const ifMatch = trimmed.match(/^if\s*\((.+)\)\s*\{?$/);
   if (ifMatch) {
-    const known = symbolTable.knownIdentifiersIn(ifMatch[1]);
-    if (known.length === 1 && ifMatch[1].trim() === known[0]) return `Checks whether ${symbolTable.describe(known[0])} meets the condition before running the code that follows.`;
+    const known = symbolTable.knownIdentifiersIn(ifMatch[1], scope);
+    if (known.length === 1 && ifMatch[1].trim() === known[0]) return `Checks whether ${symbolTable.describe(known[0], scope)} meets the condition before running the code that follows.`;
     return `Checks whether \`${ifMatch[1].trim()}\` is true before running the code that follows.`;
   }
   if (/^\}?\s*else\b/.test(trimmed)) return "Defines the alternative block that runs when the previous condition is false.";

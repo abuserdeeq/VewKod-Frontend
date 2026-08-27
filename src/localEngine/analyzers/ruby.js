@@ -3,6 +3,11 @@ import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExp
 export const id = "ruby";
 export const label = "Ruby";
 
+// Function-level scoping (see shared/patterns.js computeLineScopes):
+// Ruby methods are closed with `end`, not braces.
+export const scopeStyle = "end";
+export const functionStartRegex = /^def\s+([A-Za-z_]\w*[?!]?)/;
+
 export function detect(code) {
   return /\bputs\b/.test(code) || /\bdef\s+\w+.*\bend\b/s.test(code) || /\.each\s+do\s*\|/.test(code);
 }
@@ -17,32 +22,38 @@ function literalRole(value) {
   return "variable";
 }
 
-export function buildSymbolTable(lines, symbolTable) {
-  lines.forEach((rawLine) => {
+export function buildSymbolTable(lines, symbolTable, lineScopes = []) {
+  lines.forEach((rawLine, index) => {
     const line = rawLine.trim();
     if (!line || isCommentLine(line)) return;
 
+    const scope = lineScopes[index] || "global";
+
     const fn = line.match(/^def\s+([A-Za-z_]\w*[?!]?)(?:\(([^)]*)\))?/);
-    if (fn) symbolTable.add(fn[1], "function", { parameters: (fn[2] || "").trim() });
+    if (fn) {
+      symbolTable.add(fn[1], "function", { parameters: (fn[2] || "").trim() }, scope);
+      const fnScope = `${scope}>${fn[1]}#${index}`;
+      (fn[2] || "").split(",").map((p) => p.trim().split("=")[0].trim()).filter(Boolean).forEach((p) => symbolTable.add(p, "parameter", {}, fnScope));
+    }
 
     const cls = line.match(/^class\s+([A-Za-z_]\w*)/);
-    if (cls) symbolTable.add(cls[1], "class");
+    if (cls) symbolTable.add(cls[1], "class", {}, scope);
 
     const assign = line.match(/^([A-Za-z_]\w*)\s*=\s*(.+)$/);
-    if (assign && !/^(if|elsif|while|for|def|class)\b/.test(line)) symbolTable.add(assign[1], literalRole(assign[2]));
+    if (assign && !/^(if|elsif|while|for|def|class)\b/.test(line)) symbolTable.add(assign[1], literalRole(assign[2]), {}, scope);
 
     // items.each do |item|
     const each = line.match(/^([A-Za-z_]\w*)\.each\s+do\s*\|\s*([A-Za-z_]\w*)\s*\|/);
     if (each) {
-      const info = symbolTable.get(each[1]);
-      symbolTable.add(each[2], "loop-item", { of: each[1], ofType: info ? info.role : "collection" });
+      const info = symbolTable.get(each[1], scope);
+      symbolTable.add(each[2], "loop-item", { of: each[1], ofType: info ? info.role : "collection" }, scope);
     }
 
     // for item in items
     const forLoop = line.match(/^for\s+([A-Za-z_]\w*)\s+in\s+([A-Za-z_]\w*)/);
     if (forLoop) {
-      const info = symbolTable.get(forLoop[2]);
-      symbolTable.add(forLoop[1], "loop-item", { of: forLoop[2], ofType: info ? info.role : "collection" });
+      const info = symbolTable.get(forLoop[2], scope);
+      symbolTable.add(forLoop[1], "loop-item", { of: forLoop[2], ofType: info ? info.role : "collection" }, scope);
     }
   });
 
@@ -77,7 +88,7 @@ export function analyzeStructure(lines) {
   return result;
 }
 
-export function explainLine(rawLine, symbolTable) {
+export function explainLine(rawLine, symbolTable, scope = "global") {
   const trimmed = rawLine.trim();
   if (!trimmed) return null;
   if (isCommentLine(trimmed)) return commentExplanation();
@@ -97,14 +108,14 @@ export function explainLine(rawLine, symbolTable) {
 
   const each = trimmed.match(/^([A-Za-z_]\w*)\.each\s+do\s*\|\s*([A-Za-z_]\w*)\s*\|/);
   if (each) {
-    const info = symbolTable.get(each[1]);
+    const info = symbolTable.get(each[1], scope);
     const phrase = info && info.role === "list" ? `the \`${each[1]}\` array` : `\`${each[1]}\``;
     return `Iterates over ${phrase} using \`.each\`; \`${each[2]}\` represents the current item on each pass.`;
   }
 
   const forLoop = trimmed.match(/^for\s+([A-Za-z_]\w*)\s+in\s+([A-Za-z_]\w*)/);
   if (forLoop) {
-    const info = symbolTable.get(forLoop[2]);
+    const info = symbolTable.get(forLoop[2], scope);
     const phrase = info && info.role === "list" ? `the \`${forLoop[2]}\` array` : `\`${forLoop[2]}\``;
     return `Iterates over ${phrase}; on each pass, \`${forLoop[1]}\` represents the current item.`;
   }
@@ -115,9 +126,9 @@ export function explainLine(rawLine, symbolTable) {
   if (ifMatch) {
     const condition = ifMatch[1].trim();
     const negate = /^unless\b/.test(trimmed);
-    const known = symbolTable.knownIdentifiersIn(condition);
+    const known = symbolTable.knownIdentifiersIn(condition, scope);
     if (known.length === 1 && condition === known[0]) {
-      return `Checks whether ${symbolTable.describe(known[0])} is ${negate ? "falsy" : "truthy"} before running the code that follows.`;
+      return `Checks whether ${symbolTable.describe(known[0], scope)} is ${negate ? "falsy" : "truthy"} before running the code that follows.`;
     }
     return `Checks whether \`${condition}\` is ${negate ? "false" : "true"} before running the code that follows.`;
   }
@@ -129,14 +140,14 @@ export function explainLine(rawLine, symbolTable) {
   const puts = trimmed.match(/^puts\s+(.+)$/);
   if (puts) {
     const arg = puts[1].trim();
-    const known = symbolTable.knownIdentifiersIn(arg);
-    if (known.length === 1 && arg === known[0]) return `Displays ${symbolTable.describe(known[0])} as program output.`;
+    const known = symbolTable.knownIdentifiersIn(arg, scope);
+    if (known.length === 1 && arg === known[0]) return `Displays ${symbolTable.describe(known[0], scope)} as program output.`;
     return `Displays \`${arg}\` as program output.`;
   }
 
   const assign = trimmed.match(/^([A-Za-z_]\w*)\s*=\s*(.+)$/);
   if (assign && !/^(if|elsif|while|for|def|class)\b/.test(trimmed)) {
-    const info = symbolTable.get(assign[1]);
+    const info = symbolTable.get(assign[1], scope);
     if (info && info.role === "list") return `Creates the array \`${assign[1]}\` containing \`${assign[2]}\`.`;
     return `Assigns \`${assign[2]}\` to the variable \`${assign[1]}\`.`;
   }

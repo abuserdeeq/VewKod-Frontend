@@ -3,6 +3,11 @@ import { isCommentLine, commentExplanation, findCommonIssues, countUsages, gener
 export const id = "python";
 export const label = "Python";
 
+// Function-level scoping (see shared/patterns.js computeLineScopes):
+// Python blocks are indentation-delimited.
+export const scopeStyle = "indent";
+export const functionStartRegex = /^def\s+([A-Za-z_]\w*)/;
+
 export function detect(code) {
   // Require Python's distinctive `def name(...):` header (colon after
   // the parameter list) rather than a bare `def`/`print` keyword —
@@ -29,23 +34,28 @@ function literalRole(value) {
   return "variable";
 }
 
-export function buildSymbolTable(lines, symbolTable) {
-  lines.forEach((rawLine) => {
+export function buildSymbolTable(lines, symbolTable, lineScopes = []) {
+  lines.forEach((rawLine, index) => {
     const line = rawLine.trim();
     if (!line || isCommentLine(line)) return;
+
+    const scope = lineScopes[index] || "global";
 
     // def name(params):
     const fn = line.match(/^def\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/);
     if (fn) {
-      symbolTable.add(fn[1], "function", { parameters: fn[2].trim() });
+      // The function's own name is visible in the *enclosing* scope;
+      // its parameters only exist inside the function's own scope.
+      symbolTable.add(fn[1], "function", { parameters: fn[2].trim() }, scope);
+      const fnScope = `${scope}>${fn[1]}#${index}`;
       fn[2].split(",").map((p) => p.trim().split("=")[0].trim()).filter(Boolean).forEach((p) => {
-        if (p !== "self") symbolTable.add(p, "parameter");
+        if (p !== "self") symbolTable.add(p, "parameter", {}, fnScope);
       });
     }
 
     // class Name
     const cls = line.match(/^class\s+([A-Za-z_]\w*)/);
-    if (cls) symbolTable.add(cls[1], "class");
+    if (cls) symbolTable.add(cls[1], "class", {}, scope);
 
     // for X in Y:   /   for X, Y in Z.items():
     const forLoop = line.match(/^for\s+(.+?)\s+in\s+(.+?)\s*:/);
@@ -53,14 +63,14 @@ export function buildSymbolTable(lines, symbolTable) {
       const targets = forLoop[1].split(",").map((t) => t.trim());
       const sourceExpr = forLoop[2].trim();
       const sourceName = sourceExpr.split(/[.(]/)[0].trim();
-      const sourceInfo = symbolTable.get(sourceName);
+      const sourceInfo = symbolTable.get(sourceName, scope);
 
       if (/^range\s*\(/.test(sourceExpr)) {
-        targets.forEach((t) => symbolTable.add(t, "loop-item", { of: "range(...)", ofType: "number sequence" }));
+        targets.forEach((t) => symbolTable.add(t, "loop-item", { of: "range(...)", ofType: "number sequence" }, scope));
       } else {
         const ofType = sourceInfo ? sourceInfo.role : "collection";
         targets.forEach((t) =>
-          symbolTable.add(t, "loop-item", { of: sourceName, ofType })
+          symbolTable.add(t, "loop-item", { of: sourceName, ofType }, scope)
         );
       }
     }
@@ -70,7 +80,7 @@ export function buildSymbolTable(lines, symbolTable) {
     if (assign && !/^(if|elif|while|for|return|def|class)\b/.test(line)) {
       const name = assign[1];
       const role = literalRole(assign[2]);
-      symbolTable.add(name, role);
+      symbolTable.add(name, role, {}, scope);
     }
   });
 
@@ -120,7 +130,7 @@ export function analyzeStructure(lines) {
 // Line-by-line explanation (symbol-table aware)
 // ------------------------------------------------------------
 
-export function explainLine(rawLine, symbolTable) {
+export function explainLine(rawLine, symbolTable, scope = "global") {
   const trimmed = rawLine.trim();
   if (!trimmed) return null;
   if (isCommentLine(trimmed)) return commentExplanation();
@@ -145,7 +155,7 @@ export function explainLine(rawLine, symbolTable) {
     const targets = forLoop[1].split(",").map((t) => t.trim());
     const sourceExpr = forLoop[2].trim();
     const sourceName = sourceExpr.split(/[.(]/)[0].trim();
-    const sourceInfo = symbolTable.get(sourceName);
+    const sourceInfo = symbolTable.get(sourceName, scope);
 
     if (/^range\s*\(/.test(sourceExpr)) {
       return `Loops through a sequence of numbers produced by \`${sourceExpr}\`, with \`${targets.join(", ")}\` holding the current number on each pass.`;
@@ -170,10 +180,10 @@ export function explainLine(rawLine, symbolTable) {
   const ifMatch = trimmed.match(/^if\s+(.+):$/) || trimmed.match(/^elif\s+(.+):$/);
   if (ifMatch) {
     const condition = ifMatch[1].trim();
-    const known = symbolTable.knownIdentifiersIn(condition);
+    const known = symbolTable.knownIdentifiersIn(condition, scope);
     const prefix = /^elif\b/.test(trimmed) ? "Checks another condition" : "Checks whether";
     if (known.length === 1 && condition === known[0]) {
-      return `${prefix === "Checks another condition" ? prefix : "Checks whether"} ${symbolTable.describe(known[0])} is truthy before running the code that follows.`;
+      return `${prefix === "Checks another condition" ? prefix : "Checks whether"} ${symbolTable.describe(known[0], scope)} is truthy before running the code that follows.`;
     }
     return `${prefix} \`${condition}\` ${prefix === "Checks another condition" ? "is met" : "is true"} before running the code that follows.`;
   }
@@ -186,9 +196,9 @@ export function explainLine(rawLine, symbolTable) {
   if (ret) {
     const value = ret[1].trim();
     if (!value) return "Returns control from the current function without a value.";
-    const known = symbolTable.knownIdentifiersIn(value);
+    const known = symbolTable.knownIdentifiersIn(value, scope);
     if (known.length === 1 && value === known[0]) {
-      return `Returns ${symbolTable.describe(known[0])} from the current function.`;
+      return `Returns ${symbolTable.describe(known[0], scope)} from the current function.`;
     }
     return `Returns \`${value}\` from the current function.`;
   }
@@ -196,9 +206,9 @@ export function explainLine(rawLine, symbolTable) {
   const printMatch = trimmed.match(/^print\s*\((.*)\)$/);
   if (printMatch) {
     const arg = printMatch[1].trim();
-    const known = symbolTable.knownIdentifiersIn(arg);
+    const known = symbolTable.knownIdentifiersIn(arg, scope);
     if (known.length === 1 && arg === known[0]) {
-      return `Displays ${symbolTable.describe(known[0])} as program output.`;
+      return `Displays ${symbolTable.describe(known[0], scope)} as program output.`;
     }
     return arg
       ? `Displays \`${arg}\` as program output.`
@@ -209,7 +219,7 @@ export function explainLine(rawLine, symbolTable) {
   if (assign && !/^(if|elif|while|for|return|def|class)\b/.test(trimmed)) {
     const name = assign[1];
     const value = assign[2].trim();
-    const info = symbolTable.get(name);
+    const info = symbolTable.get(name, scope);
 
     if (info && info.role === "list") return `Creates the list \`${name}\` containing \`${value}\`.`;
     if (info && info.role === "dict") return `Creates the dictionary \`${name}\` with the key/value pairs \`${value}\`.`;
@@ -219,7 +229,7 @@ export function explainLine(rawLine, symbolTable) {
 
   const funcCall = trimmed.match(/^([A-Za-z_]\w*)\s*\((.*)\)\s*$/);
   if (funcCall) {
-    const info = symbolTable.get(funcCall[1]);
+    const info = symbolTable.get(funcCall[1], scope);
     const label = info && info.role === "function" ? `the \`${funcCall[1]}()\` function defined above` : `\`${funcCall[1]}()\``;
     return funcCall[2].trim()
       ? `Calls ${label} with the provided argument(s).`
@@ -230,8 +240,8 @@ export function explainLine(rawLine, symbolTable) {
   const methodCall = trimmed.match(/^([A-Za-z_]\w*)\.([A-Za-z_]\w*)\s*\((.*)\)\s*$/);
   if (methodCall) {
     const [, objName, methodName, args] = methodCall;
-    const objInfo = symbolTable.get(objName);
-    const objPhrase = objInfo ? symbolTable.describe(objName) : `\`${objName}\``;
+    const objInfo = symbolTable.get(objName, scope);
+    const objPhrase = objInfo ? symbolTable.describe(objName, scope) : `\`${objName}\``;
     return args.trim()
       ? `Calls \`.${methodName}(${args.trim()})\` on ${objPhrase}.`
       : `Calls \`.${methodName}()\` on ${objPhrase}.`;
@@ -285,8 +295,9 @@ export function findIssues(lines, symbolTable) {
     }
   });
 
-  symbolTable.symbols.forEach((info, name) => {
+  symbolTable.symbols.forEach((info) => {
     if (info.role === "parameter" || info.role === "loop-item") return;
+    const name = info.name;
     if (countUsages(lines, name) <= 1) {
       const defLine = lines.findIndex((l) => new RegExp(`\\b${name}\\b`).test(l));
       issues.push({ line: defLine + 1, type: "review", message: `Variable \`${name}\` appears to be assigned but may not be used later.` });

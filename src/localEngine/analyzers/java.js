@@ -3,6 +3,11 @@ import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExp
 export const id = "java";
 export const label = "Java";
 
+// Function-level scoping (see shared/patterns.js computeLineScopes):
+// Java method bodies are brace-delimited.
+export const scopeStyle = "brace";
+export const functionStartRegex = /^(?:public|private|protected)?\s*(?:static\s+)?[\w<>\[\]]+\s+([A-Za-z_$][\w$]*)\s*\(/;
+
 export function detect(code) {
   return /\b(public|private|protected)\b/.test(code) && /\b(class|static|void|int|String)\b/.test(code);
 }
@@ -20,28 +25,32 @@ function typeRole(type) {
   return "variable";
 }
 
-export function buildSymbolTable(lines, symbolTable) {
-  lines.forEach((rawLine) => {
+export function buildSymbolTable(lines, symbolTable, lineScopes = []) {
+  lines.forEach((rawLine, index) => {
     const line = rawLine.trim();
     if (!line || isCommentLine(line)) return;
 
+    const scope = lineScopes[index] || "global";
+
     const cls = line.match(/\bclass\s+([A-Za-z_$][\w$]*)/);
-    if (cls) symbolTable.add(cls[1], "class");
+    if (cls) symbolTable.add(cls[1], "class", {}, scope);
 
     const method = line.match(/^(?:public|private|protected)?\s*(?:static\s+)?[\w<>\[\]]+\s+([A-Za-z_$][\w$]*)\s*\(([^)]*)\)\s*\{?$/);
     if (method && !/\b(if|for|while|switch)\b/.test(line)) {
-      symbolTable.add(method[1], "function", { parameters: method[2].trim() });
+      symbolTable.add(method[1], "function", { parameters: method[2].trim() }, scope);
+      const fnScope = `${scope}>${method[1]}#${index}`;
+      method[2].split(",").map((p) => p.trim().split(/\s+/).pop()).filter(Boolean).forEach((p) => symbolTable.add(p, "parameter", {}, fnScope));
     }
 
     // Type varName = value;
     const decl = line.match(/^(?:public|private|protected)?\s*(?:static\s+)?(?:final\s+)?([\w<>\[\], ]+?)\s+([A-Za-z_$][\w$]*)\s*=\s*(.+);/);
-    if (decl) symbolTable.add(decl[2], typeRole(decl[1]));
+    if (decl) symbolTable.add(decl[2], typeRole(decl[1]), {}, scope);
 
     // enhanced for: for (Type item : items)
     const forEach = line.match(/^for\s*\(\s*[\w<>\[\]]+\s+([A-Za-z_$][\w$]*)\s*:\s*([A-Za-z_$][\w$]*)\s*\)/);
     if (forEach) {
-      const info = symbolTable.get(forEach[2]);
-      symbolTable.add(forEach[1], "loop-item", { of: forEach[2], ofType: info ? info.role : "collection" });
+      const info = symbolTable.get(forEach[2], scope);
+      symbolTable.add(forEach[1], "loop-item", { of: forEach[2], ofType: info ? info.role : "collection" }, scope);
     }
   });
 
@@ -73,7 +82,7 @@ export function analyzeStructure(lines) {
   return result;
 }
 
-export function explainLine(rawLine, symbolTable) {
+export function explainLine(rawLine, symbolTable, scope = "global") {
   const trimmed = rawLine.trim();
   if (!trimmed) return null;
   if (isCommentLine(trimmed)) return commentExplanation();
@@ -93,7 +102,7 @@ export function explainLine(rawLine, symbolTable) {
 
   const forEach = trimmed.match(/^for\s*\(\s*[\w<>\[\]]+\s+([A-Za-z_$][\w$]*)\s*:\s*([A-Za-z_$][\w$]*)\s*\)/);
   if (forEach) {
-    const info = symbolTable.get(forEach[2]);
+    const info = symbolTable.get(forEach[2], scope);
     const phrase = info && info.role === "list" ? `the \`${forEach[2]}\` list` : `\`${forEach[2]}\``;
     return `Iterates over ${phrase}; on each pass, \`${forEach[1]}\` represents the current item.`;
   }
@@ -104,8 +113,8 @@ export function explainLine(rawLine, symbolTable) {
   const ifMatch = trimmed.match(/^if\s*\((.+)\)\s*\{?$/);
   if (ifMatch) {
     const condition = ifMatch[1].trim();
-    const known = symbolTable.knownIdentifiersIn(condition);
-    if (known.length === 1 && condition === known[0]) return `Checks whether ${symbolTable.describe(known[0])} meets the condition before running the code that follows.`;
+    const known = symbolTable.knownIdentifiersIn(condition, scope);
+    if (known.length === 1 && condition === known[0]) return `Checks whether ${symbolTable.describe(known[0], scope)} meets the condition before running the code that follows.`;
     return `Checks whether \`${condition}\` is true before running the code that follows.`;
   }
   if (/^\}?\s*else\b/.test(trimmed)) return "Defines the alternative block that runs when the previous condition is false.";
