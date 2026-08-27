@@ -6,7 +6,9 @@ export function useLocalStorage(key, initialValue) {
       const item = window.localStorage.getItem(key);
       return item ? JSON.parse(item) : initialValue;
     } catch (error) {
-      console.error(`Error reading localStorage key "${key}":`, error);
+      if (import.meta.env.DEV) {
+        console.error(`Error reading localStorage key "${key}":`, error);
+      }
       return initialValue;
     }
   });
@@ -17,7 +19,9 @@ export function useLocalStorage(key, initialValue) {
       setStoredValue(valueToStore);
       window.localStorage.setItem(key, JSON.stringify(valueToStore));
     } catch (error) {
-      console.error(`Error setting localStorage key "${key}":`, error);
+      if (import.meta.env.DEV) {
+        console.error(`Error setting localStorage key "${key}":`, error);
+      }
     }
   };
 
@@ -26,7 +30,9 @@ export function useLocalStorage(key, initialValue) {
       window.localStorage.removeItem(key);
       setStoredValue(initialValue);
     } catch (error) {
-      console.error(`Error removing localStorage key "${key}":`, error);
+      if (import.meta.env.DEV) {
+        console.error(`Error removing localStorage key "${key}":`, error);
+      }
     }
   };
 
