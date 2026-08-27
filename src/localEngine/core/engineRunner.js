@@ -1,4 +1,5 @@
 import { createSymbolTable } from "./symbolTable.js";
+import { computeLineScopes } from "../shared/patterns.js";
 
 import * as python from "../analyzers/python.js";
 import * as javascript from "../analyzers/javascript.js";
@@ -150,13 +151,37 @@ function buildIssuesSection(issues) {
   return text;
 }
 
+function buildRemainderSummary(lines, maxLines, structure) {
+  const remainingCount = lines.length - maxLines;
+  let text = `- *(${remainingCount} more line${remainingCount !== 1 ? "s" : ""} not shown individually — summary below)*\n`;
+
+  const remainderFns = structure.functions.filter((f) => f.line > maxLines);
+  const remainderLoops = structure.loops.filter((l) => l > maxLines);
+  const remainderConds = structure.conditionals.filter((l) => l > maxLines);
+  const remainderClasses = structure.classes.filter((c) => c.line > maxLines);
+
+  if (remainderFns.length) text += `  - Defines ${remainderFns.length} more function(s): ${remainderFns.map((f) => `\`${f.name}\` (line ${f.line})`).join(", ")}\n`;
+  if (remainderClasses.length) text += `  - Defines ${remainderClasses.length} more class(es): ${remainderClasses.map((c) => `\`${c.name}\` (line ${c.line})`).join(", ")}\n`;
+  if (remainderLoops.length) text += `  - Contains ${remainderLoops.length} more loop(s) (starting at line${remainderLoops.length !== 1 ? "s" : ""} ${remainderLoops.join(", ")}).\n`;
+  if (remainderConds.length) text += `  - Contains ${remainderConds.length} more conditional block(s) (starting at line${remainderConds.length !== 1 ? "s" : ""} ${remainderConds.join(", ")}).\n`;
+
+  return text;
+}
+
 export function generateLocalExplanation(code, language) {
   const detectedLanguage = detectLanguage(code, language);
   const analyzer = getAnalyzer(detectedLanguage);
   const lines = code.split("\n");
 
+  // Function-level scoping: lets two different functions reuse the
+  // same variable name without one clobbering the other's meaning.
+  // Only analyzers that declare `scopeStyle`/`functionStartRegex`
+  // opt in — others fall back to a single flat "global" scope,
+  // identical to the previous (pre-scoping) behavior.
+  const lineScopes = computeLineScopes(lines, analyzer.scopeStyle || "none", analyzer.functionStartRegex || null);
+
   const symbolTable = createSymbolTable();
-  analyzer.buildSymbolTable(lines, symbolTable);
+  analyzer.buildSymbolTable(lines, symbolTable, lineScopes);
 
   const structure = analyzer.analyzeStructure(lines, symbolTable);
   const issues = analyzer.findIssues(lines, symbolTable);
@@ -165,14 +190,16 @@ export function generateLocalExplanation(code, language) {
   explanation += buildStructureBreakdown(structure);
 
   explanation += `## Line-by-Line Explanation\n\n`;
-  const maxLines = 20;
+  const maxLines = 40;
 
   lines.slice(0, maxLines).forEach((line, index) => {
-    const description = analyzer.explainLine(line, symbolTable);
+    const description = analyzer.explainLine(line, symbolTable, lineScopes[index]);
     if (description) explanation += `- **Line ${index + 1}:** ${description}\n`;
   });
 
-  if (lines.length > maxLines) explanation += `- ...and ${lines.length - maxLines} more line(s).\n`;
+  if (lines.length > maxLines) {
+    explanation += buildRemainderSummary(lines, maxLines, structure);
+  }
   explanation += `\n`;
 
   explanation += buildKeyConcepts(structure);
