@@ -98,10 +98,6 @@ export default function App() {
     setHistory((prev) => prev.filter((item) => item.id !== id));
   };
 
-  const handleClearHistory = () => {
-    setHistory([]);
-  };
-
   return (
     <div className="min-h-screen bg-[#0f172a] flex flex-col relative overflow-hidden">
       {/* Animated Background Blobs */}
@@ -258,7 +254,6 @@ export default function App() {
         onClose={() => setShowHistory(false)}
         onRestore={handleRestoreHistory}
         onDelete={handleDeleteHistoryItem}
-        onClearAll={handleClearHistory}
       />
     </div>
   );
