@@ -112,7 +112,7 @@ export function analyzeStructure(lines) {
     if (/^(for|while)\b/.test(line) || /\bforEach\s*\(/.test(line)) result.loops.push(lineNumber);
     if (/^if\s*\(/.test(line) || /^(else|switch|case)\b/.test(line)) result.conditionals.push(lineNumber);
     if (/^return\b/.test(line)) result.returns.push(lineNumber);
-    if (/\bconsole\.log\s*\(/.test(line)) result.outputs.push(lineNumber);
+    if (/\bconsole\.(log|error|warn|info|debug)\s*\(/.test(line)) result.outputs.push(lineNumber);
   });
 
   return result;
@@ -186,6 +186,27 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   if (/^switch\s*\(/.test(trimmed)) return "Starts a switch statement that selects a block of code based on a value.";
   if (/^case\s+/.test(trimmed)) return "Defines one possible case inside a switch statement.";
 
+  if (/^try\s*\{?$/.test(trimmed)) {
+    return "Starts a `try` block; if an error occurs anywhere inside it, execution jumps to the matching `catch` block below.";
+  }
+
+  const catchMatch = trimmed.match(/^\}?\s*catch\s*(?:\(([^)]*)\))?\s*\{?$/);
+  if (catchMatch) {
+    const errName = (catchMatch[1] || "").trim();
+    return errName
+      ? `Catches any error thrown in the \`try\` block above, made available here as \`${errName}\`.`
+      : "Catches any error thrown in the `try` block above.";
+  }
+
+  if (/^\}?\s*finally\s*\{?$/.test(trimmed)) {
+    return "Starts a `finally` block, which always runs after the `try`/`catch`, whether or not an error occurred.";
+  }
+
+  const throwMatch = trimmed.match(/^throw\s+(.+?);?$/);
+  if (throwMatch) {
+    return `Throws an error (\`${throwMatch[1].trim()}\`), stopping normal execution here so it can be caught by an enclosing \`try\`/\`catch\`.`;
+  }
+
   const ret = trimmed.match(/^return\b\s*(.*?);?$/);
   if (ret) {
     const value = ret[1].trim();
@@ -195,12 +216,25 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
     return `Returns \`${value}\` from the current function.`;
   }
 
-  const log = trimmed.match(/\bconsole\.log\s*\((.*)\)\s*;?$/);
+  const log = trimmed.match(/\bconsole\.(log|error|warn|info|debug)\s*\((.*)\)\s*;?$/);
   if (log) {
-    const arg = log[1].trim();
+    const [, method, argsRaw] = log;
+    const arg = argsRaw.trim();
     const known = symbolTable.knownIdentifiersIn(arg, scope);
-    if (known.length === 1 && arg === known[0]) return `Displays ${symbolTable.describe(known[0], scope)} in the browser/console.`;
-    return arg ? `Displays \`${arg}\` in the browser/console.` : "Prints a blank line to the console.";
+    const argPhrase = known.length === 1 && arg === known[0]
+      ? symbolTable.describe(known[0], scope)
+      : (arg ? `\`${arg}\`` : null);
+
+    if (method === "log") {
+      return argPhrase ? `Displays ${argPhrase} in the browser/console.` : "Prints a blank line to the console.";
+    }
+    const verb = {
+      error: "Logs an error",
+      warn: "Logs a warning",
+      info: "Logs an informational message",
+      debug: "Logs a debug message",
+    }[method];
+    return argPhrase ? `${verb} (${argPhrase}) to the console.` : `${verb} to the console.`;
   }
 
   const declared = trimmed.match(/^(?:export\s+)?(const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(.+?);?$/);
@@ -247,7 +281,11 @@ export function findIssues(lines, symbolTable) {
   });
 
   symbolTable.symbols.forEach((info) => {
-    if (info.role === "parameter" || info.role === "loop-item") return;
+    // Functions/classes are commonly defined without being called within
+    // the same standalone snippet (e.g. a utility extracted from a larger
+    // file) — flagging that as "unused" produces a false positive on
+    // almost every single-function snippet, so only variables are checked.
+    if (["parameter", "loop-item", "function", "class"].includes(info.role)) return;
     const name = info.name;
     if (countUsages(lines, name) <= 1) {
       const defLine = lines.findIndex((l) => new RegExp(`\\b${name}\\b`).test(l));

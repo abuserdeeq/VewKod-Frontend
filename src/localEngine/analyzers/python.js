@@ -192,6 +192,31 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
     return "Defines the alternative block that runs when none of the earlier conditions were true.";
   }
 
+  if (/^try\s*:$/.test(trimmed)) {
+    return "Starts a `try` block; if an error occurs anywhere inside it, control jumps to the matching `except` block below.";
+  }
+
+  const exceptMatch = trimmed.match(/^except(?:\s+([\w.]+))?(?:\s+as\s+(\w+))?\s*:$/);
+  if (exceptMatch) {
+    const [, excType, excName] = exceptMatch;
+    if (!excType) return "Catches any exception raised in the `try` block above.";
+    return excName
+      ? `Catches a \`${excType}\` exception raised in the \`try\` block above, made available here as \`${excName}\`.`
+      : `Catches a \`${excType}\` exception raised in the \`try\` block above.`;
+  }
+
+  if (/^finally\s*:$/.test(trimmed)) {
+    return "Starts a `finally` block, which always runs after the `try`/`except`, whether or not an exception occurred.";
+  }
+
+  const raiseMatch = trimmed.match(/^raise\b\s*(.*)$/);
+  if (raiseMatch) {
+    const value = raiseMatch[1].trim();
+    return value
+      ? `Raises an exception (\`${value}\`), stopping normal execution so it can be caught by an enclosing \`try\`/\`except\`.`
+      : "Re-raises the exception currently being handled.";
+  }
+
   const ret = trimmed.match(/^return\b\s*(.*)$/);
   if (ret) {
     const value = ret[1].trim();
@@ -296,7 +321,11 @@ export function findIssues(lines, symbolTable) {
   });
 
   symbolTable.symbols.forEach((info) => {
-    if (info.role === "parameter" || info.role === "loop-item") return;
+    // Functions/classes are commonly defined without being called within
+    // the same standalone snippet — flagging that as "unused" produces a
+    // false positive on almost every single-function snippet, so only
+    // variables are checked here.
+    if (["parameter", "loop-item", "function", "class"].includes(info.role)) return;
     const name = info.name;
     if (countUsages(lines, name) <= 1) {
       const defLine = lines.findIndex((l) => new RegExp(`\\b${name}\\b`).test(l));
