@@ -32,7 +32,6 @@ describe("HistoryPanel", () => {
         onClose={() => {}}
         onRestore={() => {}}
         onDelete={() => {}}
-        onClearAll={() => {}}
       />
     );
     expect(screen.queryByText("History")).not.toBeInTheDocument();
@@ -46,7 +45,6 @@ describe("HistoryPanel", () => {
         onClose={() => {}}
         onRestore={() => {}}
         onDelete={() => {}}
-        onClearAll={() => {}}
       />
     );
     expect(screen.getByText(/no explanations yet/i)).toBeInTheDocument();
@@ -62,7 +60,6 @@ describe("HistoryPanel", () => {
         onClose={() => {}}
         onRestore={onRestore}
         onDelete={() => {}}
-        onClearAll={() => {}}
       />
     );
 
@@ -82,31 +79,12 @@ describe("HistoryPanel", () => {
         onClose={() => {}}
         onRestore={onRestore}
         onDelete={onDelete}
-        onClearAll={() => {}}
       />
     );
 
     await user.click(screen.getByRole("button", { name: /delete this history item/i }));
     expect(onDelete).toHaveBeenCalledWith("1");
     expect(onRestore).not.toHaveBeenCalled();
-  });
-
-  it("calls onClearAll when Clear all history is clicked", async () => {
-    const user = userEvent.setup();
-    const onClearAll = vi.fn();
-    render(
-      <HistoryPanel
-        open={true}
-        history={sampleHistory}
-        onClose={() => {}}
-        onRestore={() => {}}
-        onDelete={() => {}}
-        onClearAll={onClearAll}
-      />
-    );
-
-    await user.click(screen.getByText(/clear all history/i));
-    expect(onClearAll).toHaveBeenCalledTimes(1);
   });
 
   it("copies a shareable summary to the clipboard when Share is clicked (no Web Share API) without restoring", async () => {
@@ -119,7 +97,6 @@ describe("HistoryPanel", () => {
         onClose={() => {}}
         onRestore={onRestore}
         onDelete={() => {}}
-        onClearAll={() => {}}
       />
     );
 
@@ -145,7 +122,6 @@ describe("HistoryPanel", () => {
         onClose={() => {}}
         onRestore={() => {}}
         onDelete={() => {}}
-        onClearAll={() => {}}
       />
     );
 
