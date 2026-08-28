@@ -8,6 +8,7 @@ describe("ResultDisplay", () => {
     Object.assign(navigator, {
       clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
     });
+    delete navigator.share;
   });
 
   it("renders nothing when there is no result", () => {
@@ -33,8 +34,45 @@ describe("ResultDisplay", () => {
     const user = userEvent.setup();
     render(<ResultDisplay result="Some explanation text" source="ai" />);
 
-    await user.click(screen.getByRole("button", { name: /copy/i }));
+    await user.click(screen.getByRole("button", { name: /^copy$/i }));
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith("Some explanation text");
     expect(await screen.findByText("Copied")).toBeInTheDocument();
+  });
+
+  it("copies a shareable version to the clipboard when Share is clicked (no Web Share API)", async () => {
+    const user = userEvent.setup();
+    render(<ResultDisplay result="Some explanation text" source="ai" />);
+
+    await user.click(screen.getByRole("button", { name: /share this explanation/i }));
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      "Vewkod code explanation:\n\nSome explanation text"
+    );
+  });
+
+  it("uses the native share sheet when the Web Share API is available", async () => {
+    const user = userEvent.setup();
+    navigator.share = vi.fn().mockResolvedValue(undefined);
+    render(<ResultDisplay result="Some explanation text" source="ai" />);
+
+    await user.click(screen.getByRole("button", { name: /share this explanation/i }));
+    expect(navigator.share).toHaveBeenCalledWith({
+      title: "Vewkod explanation",
+      text: "Vewkod code explanation:\n\nSome explanation text",
+    });
+    expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
+  });
+
+  it("calls onClear when the Clear button is clicked, and hides Clear when no handler is given", async () => {
+    const user = userEvent.setup();
+    const onClear = vi.fn();
+    const { rerender } = render(
+      <ResultDisplay result="Some explanation text" source="ai" onClear={onClear} />
+    );
+
+    await user.click(screen.getByRole("button", { name: /clear this explanation/i }));
+    expect(onClear).toHaveBeenCalledTimes(1);
+
+    rerender(<ResultDisplay result="Some explanation text" source="ai" />);
+    expect(screen.queryByRole("button", { name: /clear this explanation/i })).not.toBeInTheDocument();
   });
 });
