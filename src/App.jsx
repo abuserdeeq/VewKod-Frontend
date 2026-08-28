@@ -81,6 +81,11 @@ export default function App() {
     abortControllerRef.current?.abort();
   };
 
+  const handleClearResult = () => {
+    setResult("");
+    setError("");
+  };
+
   const handleRestoreHistory = (entry) => {
     codeInputRef.current?.loadSnippet(entry.code, entry.language);
     setResult(entry.explanation);
@@ -170,7 +175,11 @@ export default function App() {
 
           <AnimatePresence>
             {result && (
-              <ResultDisplay result={result} source={resultSource} />
+              <ResultDisplay
+                result={result}
+                source={resultSource}
+                onClear={handleClearResult}
+              />
             )}
           </AnimatePresence>
 
