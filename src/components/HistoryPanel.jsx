@@ -25,7 +25,7 @@ function buildShareText(item) {
   ].join("\n");
 }
 
-export default function HistoryPanel({ open, history, onClose, onRestore, onDelete, onClearAll }) {
+export default function HistoryPanel({ open, history, onClose, onRestore, onDelete }) {
   const [copiedId, setCopiedId] = useState(null);
 
   const handleShare = async (event, item) => {
@@ -130,7 +130,7 @@ export default function HistoryPanel({ open, history, onClose, onRestore, onDele
                           <button
                             onClick={(e) => handleShare(e, item)}
                             aria-label="Share this history item"
-                            className="flex items-center gap-1 text-[11px] text-slate-600 hover:text-blue-400 transition-colors opacity-0 group-hover:opacity-100"
+                            className="flex items-center gap-1 text-[11px] text-slate-600 hover:text-blue-400 transition-colors opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
                           >
                             {copiedId === item.id ? (
                               <>
@@ -150,7 +150,7 @@ export default function HistoryPanel({ open, history, onClose, onRestore, onDele
                               onDelete(item.id);
                             }}
                             aria-label="Delete this history item"
-                            className="flex items-center gap-1 text-[11px] text-slate-600 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
+                            className="flex items-center gap-1 text-[11px] text-slate-600 hover:text-red-400 transition-colors opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
                           >
                             <Trash2 className="w-3 h-3" />
                             Delete
@@ -162,17 +162,6 @@ export default function HistoryPanel({ open, history, onClose, onRestore, onDele
                 </ul>
               )}
             </div>
-
-            {history.length > 0 && (
-              <div className="px-5 py-3 border-t border-slate-700/30">
-                <button
-                  onClick={onClearAll}
-                  className="w-full text-xs text-slate-500 hover:text-red-400 transition-colors"
-                >
-                  Clear all history
-                </button>
-              </div>
-            )}
           </motion.div>
         </>
       )}

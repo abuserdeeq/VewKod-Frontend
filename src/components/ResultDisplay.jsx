@@ -91,7 +91,7 @@ export default function ResultDisplay({ result, source = "ai", onClear }) {
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               aria-label="Share this explanation"
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+              className={`flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
                 shared
                   ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
                   : "bg-[#1e293b] text-slate-400 hover:text-white border border-slate-700/40 hover:border-blue-500/30"
@@ -100,12 +100,12 @@ export default function ResultDisplay({ result, source = "ai", onClear }) {
               {shared ? (
                 <>
                   <Check className="w-3.5 h-3.5" />
-                  Copied
+                  <span className="hidden sm:inline">Copied</span>
                 </>
               ) : (
                 <>
                   <Share2 className="w-3.5 h-3.5" />
-                  Share
+                  <span className="hidden sm:inline">Share</span>
                 </>
               )}
             </motion.button>
@@ -114,7 +114,7 @@ export default function ResultDisplay({ result, source = "ai", onClear }) {
               onClick={handleCopy}
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+              className={`flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
                 copied
                   ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
                   : "bg-[#1e293b] text-slate-400 hover:text-white border border-slate-700/40 hover:border-blue-500/30"
@@ -123,12 +123,12 @@ export default function ResultDisplay({ result, source = "ai", onClear }) {
               {copied ? (
                 <>
                   <Check className="w-3.5 h-3.5" />
-                  Copied
+                  <span className="hidden sm:inline">Copied</span>
                 </>
               ) : (
                 <>
                   <Copy className="w-3.5 h-3.5" />
-                  Copy
+                  <span className="hidden sm:inline">Copy</span>
                 </>
               )}
             </motion.button>
@@ -139,10 +139,10 @@ export default function ResultDisplay({ result, source = "ai", onClear }) {
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
                 aria-label="Clear this explanation"
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-[#1e293b] text-slate-400 hover:text-red-400 border border-slate-700/40 hover:border-red-500/30 transition-all"
+                className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg text-xs font-medium bg-[#1e293b] text-slate-400 hover:text-red-400 border border-slate-700/40 hover:border-red-500/30 transition-all"
               >
                 <Trash2 className="w-3.5 h-3.5" />
-                Clear
+                <span className="hidden sm:inline">Clear</span>
               </motion.button>
             )}
           </div>
