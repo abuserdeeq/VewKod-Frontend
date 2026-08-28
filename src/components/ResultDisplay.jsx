@@ -3,10 +3,11 @@ import { motion } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { Copy, Check, Bot, Cpu, Sparkles } from "lucide-react";
+import { Copy, Check, Bot, Cpu, Sparkles, Share2, Trash2 } from "lucide-react";
 
-export default function ResultDisplay({ result, source = "ai" }) {
+export default function ResultDisplay({ result, source = "ai", onClear }) {
   const [copied, setCopied] = useState(false);
+  const [shared, setShared] = useState(false);
 
   if (!result) return null;
 
@@ -17,6 +18,33 @@ export default function ResultDisplay({ result, source = "ai" }) {
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
       if (import.meta.env.DEV) console.error("Failed to copy:", err);
+    }
+  };
+
+  const handleShare = async () => {
+    const shareText = `Vewkod code explanation:\n\n${result}`;
+
+    // Prefer the native share sheet (works well on mobile); fall back to
+    // copying to the clipboard when the Web Share API isn't available.
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: "Vewkod explanation", text: shareText });
+      } catch (err) {
+        // AbortError just means the user closed the native share sheet —
+        // not a real failure, so no fallback/feedback needed for that.
+        if (err.name !== "AbortError" && import.meta.env.DEV) {
+          console.error("Share failed:", err);
+        }
+      }
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(shareText);
+      setShared(true);
+      setTimeout(() => setShared(false), 2000);
+    } catch (err) {
+      if (import.meta.env.DEV) console.error("Failed to copy for sharing:", err);
     }
   };
 
@@ -57,28 +85,67 @@ export default function ResultDisplay({ result, source = "ai" }) {
             </div>
           </div>
 
-          <motion.button
-            onClick={handleCopy}
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-              copied
-                ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                : "bg-[#1e293b] text-slate-400 hover:text-white border border-slate-700/40 hover:border-blue-500/30"
-            }`}
-          >
-            {copied ? (
-              <>
-                <Check className="w-3.5 h-3.5" />
-                Copied
-              </>
-            ) : (
-              <>
-                <Copy className="w-3.5 h-3.5" />
-                Copy
-              </>
+          <div className="flex items-center gap-2">
+            <motion.button
+              onClick={handleShare}
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              aria-label="Share this explanation"
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                shared
+                  ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                  : "bg-[#1e293b] text-slate-400 hover:text-white border border-slate-700/40 hover:border-blue-500/30"
+              }`}
+            >
+              {shared ? (
+                <>
+                  <Check className="w-3.5 h-3.5" />
+                  Copied
+                </>
+              ) : (
+                <>
+                  <Share2 className="w-3.5 h-3.5" />
+                  Share
+                </>
+              )}
+            </motion.button>
+
+            <motion.button
+              onClick={handleCopy}
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                copied
+                  ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                  : "bg-[#1e293b] text-slate-400 hover:text-white border border-slate-700/40 hover:border-blue-500/30"
+              }`}
+            >
+              {copied ? (
+                <>
+                  <Check className="w-3.5 h-3.5" />
+                  Copied
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5" />
+                  Copy
+                </>
+              )}
+            </motion.button>
+
+            {onClear && (
+              <motion.button
+                onClick={onClear}
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                aria-label="Clear this explanation"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-[#1e293b] text-slate-400 hover:text-red-400 border border-slate-700/40 hover:border-red-500/30 transition-all"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Clear
+              </motion.button>
             )}
-          </motion.button>
+          </div>
         </div>
 
         {/* Result Content */}

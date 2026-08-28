@@ -44,7 +44,7 @@ export default function Header({ historyCount = 0, onOpenHistory }) {
           </button>
 
           <a
-            href="https://github.com"
+            href="https://github.com/abuserdeeq/VewKod"
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-2 text-sm text-slate-400 hover:text-white transition-colors group"
