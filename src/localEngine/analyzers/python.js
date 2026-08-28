@@ -1,4 +1,4 @@
-import { isCommentLine, commentExplanation, findCommonIssues, countUsages, genericFallbackExplanation } from "../shared/patterns.js";
+import { isCommentLine, commentExplanation, findCommonIssues, countUsages, genericFallbackExplanation, mdCode } from "../shared/patterns.js";
 
 export const id = "python";
 export const label = "Python";
@@ -185,7 +185,7 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
     if (known.length === 1 && condition === known[0]) {
       return `${prefix === "Checks another condition" ? prefix : "Checks whether"} ${symbolTable.describe(known[0], scope)} is truthy before running the code that follows.`;
     }
-    return `${prefix} \`${condition}\` ${prefix === "Checks another condition" ? "is met" : "is true"} before running the code that follows.`;
+    return `${prefix} ${mdCode(condition)} ${prefix === "Checks another condition" ? "is met" : "is true"} before running the code that follows.`;
   }
 
   if (/^else\s*:/.test(trimmed)) {
@@ -213,7 +213,7 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   if (raiseMatch) {
     const value = raiseMatch[1].trim();
     return value
-      ? `Raises an exception (\`${value}\`), stopping normal execution so it can be caught by an enclosing \`try\`/\`except\`.`
+      ? `Raises an exception (${mdCode(value)}), stopping normal execution so it can be caught by an enclosing \`try\`/\`except\`.`
       : "Re-raises the exception currently being handled.";
   }
 
@@ -225,7 +225,7 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
     if (known.length === 1 && value === known[0]) {
       return `Returns ${symbolTable.describe(known[0], scope)} from the current function.`;
     }
-    return `Returns \`${value}\` from the current function.`;
+    return `Returns ${mdCode(value)} from the current function.`;
   }
 
   const printMatch = trimmed.match(/^print\s*\((.*)\)$/);
@@ -236,7 +236,7 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
       return `Displays ${symbolTable.describe(known[0], scope)} as program output.`;
     }
     return arg
-      ? `Displays \`${arg}\` as program output.`
+      ? `Displays ${mdCode(arg)} as program output.`
       : "Prints a blank line as program output.";
   }
 
@@ -246,10 +246,10 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
     const value = assign[2].trim();
     const info = symbolTable.get(name, scope);
 
-    if (info && info.role === "list") return `Creates the list \`${name}\` containing \`${value}\`.`;
-    if (info && info.role === "dict") return `Creates the dictionary \`${name}\` with the key/value pairs \`${value}\`.`;
-    if (info && info.role === "set") return `Creates the set \`${name}\` containing \`${value}\`.`;
-    return `Assigns \`${value}\` to the variable \`${name}\`.`;
+    if (info && info.role === "list") return `Creates the list \`${name}\` containing ${mdCode(value)}.`;
+    if (info && info.role === "dict") return `Creates the dictionary \`${name}\` with the key/value pairs ${mdCode(value)}.`;
+    if (info && info.role === "set") return `Creates the set \`${name}\` containing ${mdCode(value)}.`;
+    return `Assigns ${mdCode(value)} to the variable \`${name}\`.`;
   }
 
   const funcCall = trimmed.match(/^([A-Za-z_]\w*)\s*\((.*)\)\s*$/);

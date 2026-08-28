@@ -1,4 +1,4 @@
-import { isCommentLine, commentExplanation, findCommonIssues, countUsages, genericFallbackExplanation } from "../shared/patterns.js";
+import { isCommentLine, commentExplanation, findCommonIssues, countUsages, genericFallbackExplanation, mdCode } from "../shared/patterns.js";
 
 export const id = "javascript";
 export const label = "JavaScript";
@@ -179,7 +179,7 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
     if (known.length === 1 && condition === known[0]) {
       return `Checks whether ${symbolTable.describe(known[0], scope)} is truthy before running the code that follows.`;
     }
-    return `Checks whether \`${condition}\` is true before running the code that follows.`;
+    return `Checks whether ${mdCode(condition)} is true before running the code that follows.`;
   }
   if (/^\}?\s*else\s+if\s*\(/.test(trimmed)) return "Checks another condition when the previous one was not met.";
   if (/^\}?\s*else\b/.test(trimmed)) return "Defines the alternative block that runs when the previous condition is false.";
@@ -204,7 +204,7 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
 
   const throwMatch = trimmed.match(/^throw\s+(.+?);?$/);
   if (throwMatch) {
-    return `Throws an error (\`${throwMatch[1].trim()}\`), stopping normal execution here so it can be caught by an enclosing \`try\`/\`catch\`.`;
+    return `Throws an error (${mdCode(throwMatch[1].trim())}), stopping normal execution here so it can be caught by an enclosing \`try\`/\`catch\`.`;
   }
 
   const ret = trimmed.match(/^return\b\s*(.*?);?$/);
@@ -213,7 +213,7 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
     if (!value) return "Returns control from the current function without a value.";
     const known = symbolTable.knownIdentifiersIn(value, scope);
     if (known.length === 1 && value === known[0]) return `Returns ${symbolTable.describe(known[0], scope)} from the current function.`;
-    return `Returns \`${value}\` from the current function.`;
+    return `Returns ${mdCode(value)} from the current function.`;
   }
 
   const log = trimmed.match(/\bconsole\.(log|error|warn|info|debug)\s*\((.*)\)\s*;?$/);
@@ -223,7 +223,7 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
     const known = symbolTable.knownIdentifiersIn(arg, scope);
     const argPhrase = known.length === 1 && arg === known[0]
       ? symbolTable.describe(known[0], scope)
-      : (arg ? `\`${arg}\`` : null);
+      : (arg ? mdCode(arg) : null);
 
     if (method === "log") {
       return argPhrase ? `Displays ${argPhrase} in the browser/console.` : "Prints a blank line to the console.";
@@ -241,9 +241,9 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   if (declared) {
     const [, keyword, name, value] = declared;
     const info = symbolTable.get(name, scope);
-    if (info && info.role === "list") return `Creates the \`${keyword}\` array \`${name}\` containing \`${value}\`.`;
-    if (info && info.role === "dict") return `Creates the \`${keyword}\` object \`${name}\` with the properties \`${value}\`.`;
-    return `Declares the \`${keyword}\` variable \`${name}\` and assigns it \`${value}\`.`;
+    if (info && info.role === "list") return `Creates the \`${keyword}\` array \`${name}\` containing ${mdCode(value)}.`;
+    if (info && info.role === "dict") return `Creates the \`${keyword}\` object \`${name}\` with the properties ${mdCode(value)}.`;
+    return `Declares the \`${keyword}\` variable \`${name}\` and assigns it ${mdCode(value)}.`;
   }
 
   const call = trimmed.match(/^([A-Za-z_$][\w$]*)\s*\((.*)\)\s*;?$/);
