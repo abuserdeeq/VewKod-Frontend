@@ -114,6 +114,29 @@ export function genericFallbackExplanation() {
   return "Executes a statement or operation that contributes to the program's overall logic.";
 }
 
+/**
+ * Wrap raw source text as a Markdown inline code span, safely.
+ *
+ * A plain single backtick wrap (`` `${value}` ``) breaks as soon as the
+ * value itself contains a backtick — which happens constantly with JS/TS
+ * template literals (e.g. `` `/api/users/${id}` ``). The embedded backtick
+ * prematurely closes the span, so the rest renders as stray, unformatted
+ * backtick characters instead of a code block.
+ *
+ * Standard Markdown's fix is to use a longer run of backticks as the
+ * fence than the longest run found inside the content, padded with a
+ * space if the content starts or ends with a backtick itself.
+ */
+export function mdCode(value) {
+  const text = String(value);
+  const runs = text.match(/`+/g) || [];
+  const longestRun = runs.reduce((max, run) => Math.max(max, run.length), 0);
+  const fence = "`".repeat(longestRun + 1);
+  const needsPadding = text.startsWith("`") || text.endsWith("`");
+  const body = needsPadding ? ` ${text} ` : text;
+  return `${fence}${body}${fence}`;
+}
+
 // ============================================================
 // Function-scope computation
 // ------------------------------------------------------------
