@@ -99,3 +99,26 @@ test("Python: a genuinely unused variable is still flagged (the fix doesn't over
   const out = generateLocalExplanation(code, "python");
   assert.match(out, /unused_value.*may not be used later/);
 });
+
+test("JavaScript: a template literal value doesn't break the Markdown code span", () => {
+  const code = [
+    "async function getUserData(userId) {",
+    "  const response = await fetch(`/api/users/${userId}`);",
+    "  return response;",
+    "}",
+  ].join("\n");
+
+  const out = generateLocalExplanation(code, "javascript");
+  const line = lineOf(out, 2);
+
+  // A single backtick wrap around a value that itself contains backticks
+  // (a template literal) would prematurely close the Markdown code span,
+  // leaving stray backtick characters in the rendered output. The fix
+  // uses a longer backtick fence (``...``) whenever the content contains
+  // a backtick, so the whole expression stays inside one code span.
+  assert.match(line, /``await fetch\(`\/api\/users\/\$\{userId\}`\)``/);
+
+  // Sanity check: no lone, unpaired single-backtick fragments remain
+  // around the template literal (the old, broken behavior).
+  assert.doesNotMatch(line, /[^`]`await fetch\(`[^`]/);
+});
