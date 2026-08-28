@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Clock, Trash2, Bot, Cpu } from "lucide-react";
+import { X, Clock, Trash2, Bot, Cpu, Share2, Check } from "lucide-react";
 
 function timeAgo(isoString) {
   const diffMs = Date.now() - new Date(isoString).getTime();
@@ -12,7 +13,49 @@ function timeAgo(isoString) {
   return `${diffDay}d ago`;
 }
 
+function buildShareText(item) {
+  return [
+    `Vewkod explanation (${item.language}):`,
+    "",
+    "```" + item.language,
+    item.code,
+    "```",
+    "",
+    item.explanation,
+  ].join("\n");
+}
+
 export default function HistoryPanel({ open, history, onClose, onRestore, onDelete, onClearAll }) {
+  const [copiedId, setCopiedId] = useState(null);
+
+  const handleShare = async (event, item) => {
+    event.stopPropagation();
+    const text = buildShareText(item);
+
+    // Prefer the native share sheet (works well on mobile); fall back to
+    // copying to the clipboard when the Web Share API isn't available.
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: "Vewkod explanation", text });
+      } catch (err) {
+        // AbortError means the user cancelled the native share sheet —
+        // not a real failure, so no fallback/feedback needed for that.
+        if (err.name !== "AbortError" && import.meta.env.DEV) {
+          console.error("Share failed:", err);
+        }
+      }
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedId(item.id);
+      setTimeout(() => setCopiedId(null), 2000);
+    } catch (err) {
+      if (import.meta.env.DEV) console.error("Copy failed:", err);
+    }
+  };
+
   return (
     <AnimatePresence>
       {open && (
@@ -83,9 +126,29 @@ export default function HistoryPanel({ open, history, onClose, onRestore, onDele
                             {item.code.split("\n")[0] || "(empty)"}
                           </p>
                         </button>
-                        <div className="px-3 pb-2 flex justify-end">
+                        <div className="px-3 pb-2 flex items-center justify-end gap-3">
                           <button
-                            onClick={() => onDelete(item.id)}
+                            onClick={(e) => handleShare(e, item)}
+                            aria-label="Share this history item"
+                            className="flex items-center gap-1 text-[11px] text-slate-600 hover:text-blue-400 transition-colors opacity-0 group-hover:opacity-100"
+                          >
+                            {copiedId === item.id ? (
+                              <>
+                                <Check className="w-3 h-3" />
+                                Copied
+                              </>
+                            ) : (
+                              <>
+                                <Share2 className="w-3 h-3" />
+                                Share
+                              </>
+                            )}
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onDelete(item.id);
+                            }}
                             aria-label="Delete this history item"
                             className="flex items-center gap-1 text-[11px] text-slate-600 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
                           >
