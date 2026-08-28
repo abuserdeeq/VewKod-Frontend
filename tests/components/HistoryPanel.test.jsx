@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import HistoryPanel from "../../src/components/HistoryPanel.jsx";
@@ -15,6 +15,15 @@ const sampleHistory = [
 ];
 
 describe("HistoryPanel", () => {
+  beforeEach(() => {
+    Object.assign(navigator, {
+      clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
+    });
+    // Simulate a browser without the Web Share API so the clipboard
+    // fallback path is exercised in tests.
+    delete navigator.share;
+  });
+
   it("renders nothing when closed", () => {
     render(
       <HistoryPanel
@@ -62,6 +71,26 @@ describe("HistoryPanel", () => {
     expect(onRestore).toHaveBeenCalledWith(sampleHistory[0]);
   });
 
+  it("calls onDelete (not onRestore) when Delete is clicked on an item", async () => {
+    const user = userEvent.setup();
+    const onDelete = vi.fn();
+    const onRestore = vi.fn();
+    render(
+      <HistoryPanel
+        open={true}
+        history={sampleHistory}
+        onClose={() => {}}
+        onRestore={onRestore}
+        onDelete={onDelete}
+        onClearAll={() => {}}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: /delete this history item/i }));
+    expect(onDelete).toHaveBeenCalledWith("1");
+    expect(onRestore).not.toHaveBeenCalled();
+  });
+
   it("calls onClearAll when Clear all history is clicked", async () => {
     const user = userEvent.setup();
     const onClearAll = vi.fn();
@@ -78,5 +107,50 @@ describe("HistoryPanel", () => {
 
     await user.click(screen.getByText(/clear all history/i));
     expect(onClearAll).toHaveBeenCalledTimes(1);
+  });
+
+  it("copies a shareable summary to the clipboard when Share is clicked (no Web Share API) without restoring", async () => {
+    const user = userEvent.setup();
+    const onRestore = vi.fn();
+    render(
+      <HistoryPanel
+        open={true}
+        history={sampleHistory}
+        onClose={() => {}}
+        onRestore={onRestore}
+        onDelete={() => {}}
+        onClearAll={() => {}}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: /share this history item/i }));
+
+    expect(navigator.clipboard.writeText).toHaveBeenCalledTimes(1);
+    const sharedText = navigator.clipboard.writeText.mock.calls[0][0];
+    expect(sharedText).toContain("print('hello')");
+    expect(sharedText).toContain("Prints hello.");
+    expect(onRestore).not.toHaveBeenCalled();
+
+    expect(await screen.findByText("Copied")).toBeInTheDocument();
+  });
+
+  it("uses the native share sheet when the Web Share API is available", async () => {
+    const user = userEvent.setup();
+    navigator.share = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <HistoryPanel
+        open={true}
+        history={sampleHistory}
+        onClose={() => {}}
+        onRestore={() => {}}
+        onDelete={() => {}}
+        onClearAll={() => {}}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: /share this history item/i }));
+    expect(navigator.share).toHaveBeenCalledTimes(1);
+    expect(navigator.share.mock.calls[0][0].text).toContain("print('hello')");
   });
 });
