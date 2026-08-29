@@ -6,6 +6,7 @@ import ResultDisplay from "./components/ResultDisplay";
 import Loader from "./components/Loader";
 import Toast from "./components/Toast";
 import HistoryPanel from "./components/HistoryPanel";
+import AuthModal from "./components/AuthModal";
 import { explainCode } from "./api";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 
@@ -18,6 +19,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [toast, setToast] = useState(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [showAuth, setShowAuth] = useState(false);
 
   // Saved past explanations, newest first, capped at MAX_HISTORY_ITEMS.
   const [history, setHistory] = useLocalStorage("vewkod_history", []);
@@ -110,6 +112,7 @@ export default function App() {
       <Header
         historyCount={history.length}
         onOpenHistory={() => setShowHistory(true)}
+        onOpenAuth={() => setShowAuth(true)}
       />
 
       <main className="flex-1 px-4 py-8 sm:py-12 relative z-10">
@@ -194,7 +197,7 @@ export default function App() {
                 },
                 {
                   title: "Pick a Language",
-                  desc: "Auto-detected, or choose from 17 supported languages",
+                  desc: "Auto-detected, or choose from 14 supported languages",
                   icon: "🎯",
                 },
                 {
@@ -255,6 +258,8 @@ export default function App() {
         onRestore={handleRestoreHistory}
         onDelete={handleDeleteHistoryItem}
       />
+
+      <AuthModal open={showAuth} onClose={() => setShowAuth(false)} />
     </div>
   );
 }
