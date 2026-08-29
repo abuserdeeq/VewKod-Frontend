@@ -63,7 +63,7 @@ export function findCommonIssues(lines) {
       });
     }
 
-    // eval() / dynamic code execution — meaningful across JS/PHP/Python/Ruby/etc.
+    // eval() / dynamic code execution — meaningful across JS/PHP/Python/etc.
     if (/\beval\s*\(/.test(line)) {
       issues.push({
         line: lineNumber,
@@ -314,8 +314,7 @@ export function mdCode(value) {
 // style:
 //   "brace" — function body delimited by { }  (JS/TS/Java/C/C++/C#/Go/Rust/PHP/Swift/Kotlin)
 //   "indent" — function body delimited by indentation (Python)
-//   "end" — function body closed by a bare `end` keyword (Ruby)
-//   "none" — no function scoping needed (HTML/CSS/SQL/Bash)
+//   "none" — no function scoping needed (SQL/Bash)
 // ============================================================
 
 export function computeLineScopes(lines, style, functionStartRegex) {
@@ -366,33 +365,6 @@ export function computeLineScopes(lines, style, functionStartRegex) {
       if (fnMatch) {
         const label = `${stack[stack.length - 1].label}>${fnMatch[1] || "fn"}#${i}`;
         stack.push({ label, indent });
-      }
-    });
-
-    return scopeOfLine;
-  }
-
-  if (style === "end") {
-    const blockOpenerRe = /^(def|class|module|if|unless|while|until|for|case|do)\b/;
-    const stack = [{ label: "global", enterDepth: -Infinity }];
-    let depth = 0;
-
-    lines.forEach((rawLine, i) => {
-      const trimmed = rawLine.trim();
-      const fnMatch = trimmed.match(functionStartRegex);
-
-      if (fnMatch) {
-        const label = `${stack[stack.length - 1].label}>${fnMatch[1] || "fn"}#${i}`;
-        scopeOfLine[i] = stack[stack.length - 1].label;
-        stack.push({ label, enterDepth: depth });
-      } else {
-        scopeOfLine[i] = stack[stack.length - 1].label;
-      }
-
-      if (blockOpenerRe.test(trimmed)) depth++;
-      if (/^end\b/.test(trimmed)) {
-        depth--;
-        while (stack.length > 1 && depth <= stack[stack.length - 1].enterDepth) stack.pop();
       }
     });
 
