@@ -1,4 +1,4 @@
-import { isCommentLine, commentExplanation, findCommonIssues, countUsages, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement, mdCode } from "../shared/patterns.js";
+import { isCommentLine, commentExplanation, findCommonIssues, countUsages, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement, explainTernary, mdCode } from "../shared/patterns.js";
 
 export const id = "javascript";
 export const label = "JavaScript";
@@ -247,6 +247,10 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   if (declared) {
     const [, keyword, name, value] = declared;
     const info = symbolTable.get(name, scope);
+
+    const ternary = explainTernary(name, value);
+    if (ternary) return ternary;
+
     if (info && info.role === "list") return `Creates the \`${keyword}\` array \`${name}\` containing ${mdCode(value)}.`;
     if (info && info.role === "dict") return `Creates the \`${keyword}\` object \`${name}\` with the properties ${mdCode(value)}.`;
     return `Declares the \`${keyword}\` variable \`${name}\` and assigns it ${mdCode(value)}.`;

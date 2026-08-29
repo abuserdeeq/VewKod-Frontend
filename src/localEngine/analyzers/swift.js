@@ -1,4 +1,4 @@
-import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment } from "../shared/patterns.js";
+import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainTernary } from "../shared/patterns.js";
 
 export const id = "swift";
 export const label = "Swift";
@@ -124,6 +124,8 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   const decl = trimmed.match(/^(let|var)\s+([A-Za-z_]\w*)\s*(?::\s*[\w<>\[\]?]+)?\s*=\s*(.+)$/);
   if (decl) {
     const kind = decl[1] === "let" ? "constant" : "variable";
+    const ternary = explainTernary(decl[2], decl[3]);
+    if (ternary) return ternary;
     return `Declares the ${kind} \`${decl[2]}\` and assigns it \`${decl[3]}\`.`;
   }
 

@@ -124,6 +124,14 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   const decl = trimmed.match(/^(val|var)\s+([A-Za-z_]\w*)\s*(?::\s*[\w<>?]+)?\s*=\s*(.+)$/);
   if (decl) {
     const kind = decl[1] === "val" ? "read-only" : "mutable";
+    // Kotlin has no C-style `cond ? a : b` — that syntax is reserved for
+    // the Elvis/null-coalescing operator (`a ?: b`). Conditional values
+    // are written with `if` as an expression instead.
+    const ifExpr = decl[3].trim().match(/^if\s*\((.+)\)\s*(.+?)\s+else\s+(.+)$/s);
+    if (ifExpr) {
+      const [, condition, whenTrue, whenFalse] = ifExpr;
+      return `Declares the ${kind} property \`${decl[2]}\` and sets it to \`${whenTrue.trim()}\` if \`${condition.trim()}\` is true, otherwise \`${whenFalse.trim()}\` (Kotlin's \`if\` used as an expression).`;
+    }
     return `Declares the ${kind} property \`${decl[2]}\` and assigns it \`${decl[3]}\`.`;
   }
 

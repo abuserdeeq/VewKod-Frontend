@@ -1,4 +1,4 @@
-import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement } from "../shared/patterns.js";
+import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement, explainTernary } from "../shared/patterns.js";
 
 export const id = "csharp";
 export const label = "C#";
@@ -123,7 +123,11 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   if (write) return `Prints \`${write[2].trim()}\` to the console${write[1] === "WriteLine" ? " with a trailing newline" : ""}.`;
 
   const decl = trimmed.match(/^(?:public|private|protected|internal)?\s*(?:static\s+)?(?:readonly\s+)?([\w<>\[\], ]+?)\s+([A-Za-z_]\w*)\s*=\s*(.+);/);
-  if (decl) return `Declares a \`${decl[1].trim()}\` variable \`${decl[2]}\` and assigns it \`${decl[3]}\`.`;
+  if (decl) {
+    const ternary = explainTernary(decl[2], decl[3]);
+    if (ternary) return ternary;
+    return `Declares a \`${decl[1].trim()}\` variable \`${decl[2]}\` and assigns it \`${decl[3]}\`.`;
+  }
 
   if (["}", "};"].includes(trimmed)) return "Closes the current code block.";
 

@@ -1,4 +1,4 @@
-import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement } from "../shared/patterns.js";
+import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement, explainTernary } from "../shared/patterns.js";
 
 export const id = "c";
 export const label = "C";
@@ -105,7 +105,11 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   if (pointer) return `Declares the pointer \`${pointer[1]}\` and points it at \`${pointer[2]}\`.`;
 
   const decl = trimmed.match(/^(int|char|float|double|long|short)\s+([A-Za-z_]\w*)\s*=\s*(.+);/);
-  if (decl) return `Declares a \`${decl[1]}\` variable \`${decl[2]}\` and assigns it \`${decl[3]}\`.`;
+  if (decl) {
+    const ternary = explainTernary(decl[2], decl[3]);
+    if (ternary) return ternary;
+    return `Declares a \`${decl[1]}\` variable \`${decl[2]}\` and assigns it \`${decl[3]}\`.`;
+  }
 
   if (["}", "};"].includes(trimmed)) return "Closes the current code block.";
 

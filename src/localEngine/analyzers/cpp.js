@@ -1,4 +1,4 @@
-import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement } from "../shared/patterns.js";
+import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement, explainTernary } from "../shared/patterns.js";
 
 export const id = "cpp";
 export const label = "C++";
@@ -116,7 +116,11 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   if (vec) return `Creates the vector \`${vec[1]}\` and initializes it with \`${vec[2]}\`.`;
 
   const decl = trimmed.match(/^(int|double|float|char|bool|string|std::string)\s+([A-Za-z_]\w*)\s*=\s*(.+);/);
-  if (decl) return `Declares a \`${decl[1]}\` variable \`${decl[2]}\` and assigns it \`${decl[3]}\`.`;
+  if (decl) {
+    const ternary = explainTernary(decl[2], decl[3]);
+    if (ternary) return ternary;
+    return `Declares a \`${decl[1]}\` variable \`${decl[2]}\` and assigns it \`${decl[3]}\`.`;
+  }
 
   if (["}", "};"].includes(trimmed)) return "Closes the current code block.";
 

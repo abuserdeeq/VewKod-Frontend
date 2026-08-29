@@ -1,4 +1,4 @@
-import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement } from "../shared/patterns.js";
+import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement, explainTernary } from "../shared/patterns.js";
 
 export const id = "php";
 export const label = "PHP";
@@ -153,6 +153,8 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   const decl = trimmed.match(/^\$([A-Za-z_]\w*)\s*=\s*(.+);/);
   if (decl) {
     const info = symbolTable.get(decl[1], scope);
+    const ternary = explainTernary(`$${decl[1]}`, decl[2]);
+    if (ternary) return ternary;
     if (info && info.role === "list") return `Creates the array \`$${decl[1]}\` containing \`${decl[2]}\`.`;
     return `Assigns \`${decl[2]}\` to the variable \`$${decl[1]}\`.`;
   }

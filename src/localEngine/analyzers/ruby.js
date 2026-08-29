@@ -1,4 +1,4 @@
-import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment } from "../shared/patterns.js";
+import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainTernary, explainMultipleAssignment } from "../shared/patterns.js";
 
 export const id = "ruby";
 export const label = "Ruby";
@@ -39,6 +39,11 @@ export function buildSymbolTable(lines, symbolTable, lineScopes = []) {
     const cls = line.match(/^class\s+([A-Za-z_]\w*)/);
     if (cls) symbolTable.add(cls[1], "class", {}, scope);
 
+    const multiAssign = line.match(/^([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)+)\s*=\s*(.+)$/);
+    if (multiAssign) {
+      multiAssign[1].split(",").map((t) => t.trim()).forEach((t) => symbolTable.add(t, "variable", {}, scope));
+    }
+
     const assign = line.match(/^([A-Za-z_]\w*)\s*=\s*(.+)$/);
     if (assign && !/^(if|elsif|while|for|def|class)\b/.test(line)) symbolTable.add(assign[1], literalRole(assign[2]), {}, scope);
 
@@ -75,6 +80,11 @@ export function analyzeStructure(lines) {
 
     const cls = line.match(/^class\s+([A-Za-z_]\w*)/);
     if (cls) result.classes.push({ line: lineNumber, name: cls[1] });
+
+    const multiAssign = line.match(/^([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)+)\s*=\s*/);
+    if (multiAssign) {
+      multiAssign[1].split(",").map((t) => t.trim()).forEach((name) => result.variables.push({ line: lineNumber, name }));
+    }
 
     const assign = line.match(/^([A-Za-z_]\w*)\s*=\s*/);
     if (assign && !/^(if|elsif|while|for|def)\b/.test(line)) result.variables.push({ line: lineNumber, name: assign[1] });
@@ -145,9 +155,14 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
     return `Displays \`${arg}\` as program output.`;
   }
 
+  const multiAssign = explainMultipleAssignment(trimmed);
+  if (multiAssign) return multiAssign;
+
   const assign = trimmed.match(/^([A-Za-z_]\w*)\s*=\s*(.+)$/);
   if (assign && !/^(if|elsif|while|for|def|class)\b/.test(trimmed)) {
     const info = symbolTable.get(assign[1], scope);
+    const ternary = explainTernary(assign[1], assign[2]);
+    if (ternary) return ternary;
     if (info && info.role === "list") return `Creates the array \`${assign[1]}\` containing \`${assign[2]}\`.`;
     return `Assigns \`${assign[2]}\` to the variable \`${assign[1]}\`.`;
   }

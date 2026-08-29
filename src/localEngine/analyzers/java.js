@@ -1,4 +1,4 @@
-import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement } from "../shared/patterns.js";
+import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement, explainTernary } from "../shared/patterns.js";
 
 export const id = "java";
 export const label = "Java";
@@ -129,7 +129,11 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   if (print) return `Prints \`${print[1].trim()}\` to the console.`;
 
   const decl = trimmed.match(/^(?:public|private|protected)?\s*(?:static\s+)?(?:final\s+)?([\w<>\[\], ]+?)\s+([A-Za-z_$][\w$]*)\s*=\s*(.+);/);
-  if (decl) return `Declares a \`${decl[1].trim()}\` variable \`${decl[2]}\` and assigns it \`${decl[3]}\`.`;
+  if (decl) {
+    const ternary = explainTernary(decl[2], decl[3]);
+    if (ternary) return ternary;
+    return `Declares a \`${decl[1].trim()}\` variable \`${decl[2]}\` and assigns it \`${decl[3]}\`.`;
+  }
 
   if (["}", "};"].includes(trimmed)) return "Closes the current code block.";
 

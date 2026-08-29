@@ -1,4 +1,4 @@
-import { isCommentLine, commentExplanation, findCommonIssues, countUsages, genericFallbackExplanation, explainAugmentedAssignment, mdCode } from "../shared/patterns.js";
+import { isCommentLine, commentExplanation, findCommonIssues, countUsages, genericFallbackExplanation, explainAugmentedAssignment, explainMultipleAssignment, explainComprehension, mdCode } from "../shared/patterns.js";
 
 export const id = "python";
 export const label = "Python";
@@ -75,6 +75,12 @@ export function buildSymbolTable(lines, symbolTable, lineScopes = []) {
       }
     }
 
+    // multiple/parallel assignment: a, b = b, a  /  a, b = 1, 2
+    const multiAssign = line.match(/^([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)+)\s*=\s*(?!=)(.+)$/);
+    if (multiAssign) {
+      multiAssign[1].split(",").map((t) => t.trim()).forEach((t) => symbolTable.add(t, "variable", {}, scope));
+    }
+
     // plain assignment: name = value  (skip comparisons / keywords)
     const assign = line.match(/^([A-Za-z_]\w*)\s*=\s*(?!=)(.+)$/);
     if (assign && !/^(if|elif|while|for|return|def|class)\b/.test(line)) {
@@ -111,6 +117,11 @@ export function analyzeStructure(lines) {
     if (cls) result.classes.push({ line: lineNumber, name: cls[1] });
 
     if (/^(import|from)\b/.test(line)) result.imports.push(lineNumber);
+
+    const multiAssign = line.match(/^([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)+)\s*=\s*(?!=)/);
+    if (multiAssign) {
+      multiAssign[1].split(",").map((t) => t.trim()).forEach((name) => result.variables.push({ line: lineNumber, name }));
+    }
 
     const assign = line.match(/^([A-Za-z_]\w*)\s*=\s*(?!=)/);
     if (assign && !/^(if|elif|while|for|def)\b/.test(line)) {
@@ -231,6 +242,26 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   const printMatch = trimmed.match(/^print\s*\((.*)\)$/);
   if (printMatch) {
     const arg = printMatch[1].trim();
+
+    const fstring = arg.match(/^f(["'])([\s\S]*)\1$/);
+    if (fstring) {
+      const body = fstring[2];
+      const placeholders = [...body.matchAll(/\{([^{}]+)\}/g)].map((m) => m[1].trim());
+      if (placeholders.length === 0) {
+        return `Displays the text ${mdCode(body)} as program output.`;
+      }
+      const described = placeholders.map((p) => {
+        const knownInner = symbolTable.knownIdentifiersIn(p, scope);
+        return knownInner.length === 1 && p === knownInner[0]
+          ? symbolTable.describe(knownInner[0], scope)
+          : mdCode(p);
+      });
+      const list = described.length === 1
+        ? described[0]
+        : `${described.slice(0, -1).join(", ")} and ${described[described.length - 1]}`;
+      return `Displays a formatted message, embedding ${list} into the text.`;
+    }
+
     const known = symbolTable.knownIdentifiersIn(arg, scope);
     if (known.length === 1 && arg === known[0]) {
       return `Displays ${symbolTable.describe(known[0], scope)} as program output.`;
@@ -240,6 +271,9 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
       : "Prints a blank line as program output.";
   }
 
+  const multiAssign = explainMultipleAssignment(trimmed);
+  if (multiAssign) return multiAssign;
+
   const augmented = explainAugmentedAssignment(trimmed, symbolTable, scope);
   if (augmented) return augmented;
 
@@ -248,6 +282,15 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
     const name = assign[1];
     const value = assign[2].trim();
     const info = symbolTable.get(name, scope);
+
+    const comprehension = explainComprehension(name, value);
+    if (comprehension) return comprehension;
+
+    const ternary = value.match(/^(.+?)\s+if\s+(.+?)\s+else\s+(.+)$/s);
+    if (ternary) {
+      const [, whenTrue, condition, whenFalse] = ternary;
+      return `Assigns \`${name}\` to ${mdCode(whenTrue.trim())} if ${mdCode(condition.trim())} is true, otherwise ${mdCode(whenFalse.trim())} — a conditional (ternary) expression.`;
+    }
 
     if (info && info.role === "list") return `Creates the list \`${name}\` containing ${mdCode(value)}.`;
     if (info && info.role === "dict") return `Creates the dictionary \`${name}\` with the key/value pairs ${mdCode(value)}.`;
