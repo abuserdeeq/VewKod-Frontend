@@ -1,4 +1,4 @@
-import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation } from "../shared/patterns.js";
+import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement } from "../shared/patterns.js";
 
 export const id = "go";
 export const label = "Go";
@@ -148,6 +148,12 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   }
 
   if (["}"].includes(trimmed)) return "Closes the current code block.";
+
+  const incDec = explainIncrementDecrement(trimmed);
+  if (incDec) return incDec;
+
+  const augmented = explainAugmentedAssignment(trimmed, symbolTable, scope);
+  if (augmented) return augmented;
 
   return genericFallbackExplanation();
 }

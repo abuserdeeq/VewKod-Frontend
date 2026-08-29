@@ -1,4 +1,4 @@
-import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation } from "../shared/patterns.js";
+import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment } from "../shared/patterns.js";
 
 export const id = "ruby";
 export const label = "Ruby";
@@ -153,6 +153,9 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   }
 
   if (trimmed === "end") return "Closes the current block (method, class, loop, or conditional).";
+
+  const augmented = explainAugmentedAssignment(trimmed, symbolTable, scope);
+  if (augmented) return augmented;
 
   return genericFallbackExplanation();
 }

@@ -1,4 +1,4 @@
-import { findCommonIssues, genericFallbackExplanation } from "../shared/patterns.js";
+import { findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment } from "../shared/patterns.js";
 
 export const id = "bash";
 export const label = "Bash";
@@ -114,6 +114,9 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   if (decl) return `Sets the variable \`${decl[1]}\` to \`${decl[2]}\`.`;
 
   if (["fi", "done", "}"].includes(trimmed)) return "Closes the current block (if/loop/function).";
+
+  const augmented = explainAugmentedAssignment(trimmed, symbolTable, scope);
+  if (augmented) return augmented;
 
   return genericFallbackExplanation();
 }

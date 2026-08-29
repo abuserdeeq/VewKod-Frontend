@@ -1,4 +1,4 @@
-import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation } from "../shared/patterns.js";
+import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment } from "../shared/patterns.js";
 
 export const id = "rust";
 export const label = "Rust";
@@ -133,6 +133,9 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   if (!trimmed.endsWith(";") && !trimmed.endsWith("{")) {
     return `Evaluates \`${trimmed}\` as the value returned from this block (Rust's implicit-return syntax — no \`return\` keyword needed).`;
   }
+
+  const augmented = explainAugmentedAssignment(trimmed, symbolTable, scope);
+  if (augmented) return augmented;
 
   return genericFallbackExplanation();
 }

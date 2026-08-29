@@ -1,4 +1,4 @@
-import { isCommentLine, commentExplanation, findCommonIssues, countUsages, genericFallbackExplanation, mdCode } from "../shared/patterns.js";
+import { isCommentLine, commentExplanation, findCommonIssues, countUsages, genericFallbackExplanation, explainAugmentedAssignment, mdCode } from "../shared/patterns.js";
 
 export const id = "python";
 export const label = "Python";
@@ -239,6 +239,9 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
       ? `Displays ${mdCode(arg)} as program output.`
       : "Prints a blank line as program output.";
   }
+
+  const augmented = explainAugmentedAssignment(trimmed, symbolTable, scope);
+  if (augmented) return augmented;
 
   const assign = trimmed.match(/^([A-Za-z_]\w*)\s*=\s*(?!=)(.+)$/);
   if (assign && !/^(if|elif|while|for|return|def|class)\b/.test(trimmed)) {

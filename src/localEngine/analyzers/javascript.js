@@ -1,4 +1,4 @@
-import { isCommentLine, commentExplanation, findCommonIssues, countUsages, genericFallbackExplanation, mdCode } from "../shared/patterns.js";
+import { isCommentLine, commentExplanation, findCommonIssues, countUsages, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement, mdCode } from "../shared/patterns.js";
 
 export const id = "javascript";
 export const label = "JavaScript";
@@ -236,6 +236,12 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
     }[method];
     return argPhrase ? `${verb} (${argPhrase}) to the console.` : `${verb} to the console.`;
   }
+
+  const incDec = explainIncrementDecrement(trimmed);
+  if (incDec) return incDec;
+
+  const augmented = explainAugmentedAssignment(trimmed, symbolTable, scope);
+  if (augmented) return augmented;
 
   const declared = trimmed.match(/^(?:export\s+)?(const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(.+?);?$/);
   if (declared) {

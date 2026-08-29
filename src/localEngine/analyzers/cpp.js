@@ -1,4 +1,4 @@
-import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation } from "../shared/patterns.js";
+import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement } from "../shared/patterns.js";
 
 export const id = "cpp";
 export const label = "C++";
@@ -119,6 +119,12 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   if (decl) return `Declares a \`${decl[1]}\` variable \`${decl[2]}\` and assigns it \`${decl[3]}\`.`;
 
   if (["}", "};"].includes(trimmed)) return "Closes the current code block.";
+
+  const incDec = explainIncrementDecrement(trimmed);
+  if (incDec) return incDec;
+
+  const augmented = explainAugmentedAssignment(trimmed, symbolTable, scope);
+  if (augmented) return augmented;
 
   return genericFallbackExplanation();
 }
