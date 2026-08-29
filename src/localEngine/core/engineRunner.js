@@ -7,24 +7,21 @@ import * as typescript from "../analyzers/typescript.js";
 import * as java from "../analyzers/java.js";
 import * as c from "../analyzers/c.js";
 import * as cpp from "../analyzers/cpp.js";
-import * as html from "../analyzers/html.js";
-import * as css from "../analyzers/css.js";
 import * as sql from "../analyzers/sql.js";
 import * as csharp from "../analyzers/csharp.js";
 import * as go from "../analyzers/go.js";
 import * as rust from "../analyzers/rust.js";
 import * as php from "../analyzers/php.js";
-import * as ruby from "../analyzers/ruby.js";
 import * as swift from "../analyzers/swift.js";
 import * as kotlin from "../analyzers/kotlin.js";
 import * as bash from "../analyzers/bash.js";
 
 // Order matters: more specific/distinctive detectors should run
 // before more general ones (e.g. TypeScript before JavaScript,
-// HTML before others, php's `<?php` tag before bash's `$var`+echo).
+// php's `<?php` tag before bash's `$var`+echo).
 const ANALYZERS = [
-  html, css, sql, bash, typescript, python, csharp, java, cpp, c,
-  go, rust, php, ruby, swift, kotlin, javascript,
+  sql, bash, typescript, python, csharp, java, cpp, c,
+  go, rust, php, swift, kotlin, javascript,
 ];
 
 const REGISTRY = ANALYZERS.reduce((acc, analyzer) => {
