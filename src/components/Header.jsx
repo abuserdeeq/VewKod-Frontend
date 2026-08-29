@@ -1,7 +1,7 @@
 import { motion } from "framer-motion";
-import { Code2, Github, Sparkles, Clock } from "lucide-react";
+import { Code2, LogIn, Sparkles, Clock } from "lucide-react";
 
-export default function Header({ historyCount = 0, onOpenHistory }) {
+export default function Header({ historyCount = 0, onOpenHistory, onOpenAuth }) {
   return (
     <motion.header
       initial={{ opacity: 0, y: -20 }}
@@ -43,15 +43,13 @@ export default function Header({ historyCount = 0, onOpenHistory }) {
             )}
           </button>
 
-          <a
-            href="https://github.com/abuserdeeq/VewKod"
-            target="_blank"
-            rel="noopener noreferrer"
+          <button
+            onClick={onOpenAuth}
             className="flex items-center gap-2 text-sm text-slate-400 hover:text-white transition-colors group"
           >
-            <Github className="w-4 h-4 group-hover:scale-110 transition-transform" />
-            <span className="hidden sm:inline">GitHub</span>
-          </a>
+            <LogIn className="w-4 h-4 group-hover:scale-110 transition-transform" />
+            <span className="hidden sm:inline">Login</span>
+          </button>
         </div>
       </div>
     </motion.header>
