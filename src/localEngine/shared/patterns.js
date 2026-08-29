@@ -114,6 +114,57 @@ export function genericFallbackExplanation() {
   return "Executes a statement or operation that contributes to the program's overall logic.";
 }
 
+const AUGMENTED_OPS = {
+  "+=": { verb: "Increases", prep: "by" },
+  "-=": { verb: "Decreases", prep: "by" },
+  "*=": { verb: "Multiplies", prep: "by" },
+  "/=": { verb: "Divides", prep: "by" },
+  "//=": { verb: "Divides (rounding down)", prep: "by" },
+  "%=": { verb: "Reduces", prep: "to its remainder when divided by" },
+  "**=": { verb: "Raises", prep: "to the power of" },
+};
+
+/**
+ * Explains an augmented-assignment line (`count += 1`, `total -= fee`, ...).
+ * Without this, lines like `count += 1` don't match any language rule
+ * (the plain `name = value` regex requires `=` directly after the name)
+ * and silently fall through to the vague generic fallback text — even
+ * though this is one of the most common lines in beginner code (loop
+ * counters, running totals). Returns null if the line isn't one of these.
+ */
+export function explainAugmentedAssignment(trimmed, symbolTable, scope) {
+  const match = trimmed.match(/^([A-Za-z_$][\w$]*)\s*(\*\*=|\/\/=|\+=|-=|\*=|\/=|%=)\s*(.+?);?$/);
+  if (!match) return null;
+  const [, name, op, rawValue] = match;
+  const info = AUGMENTED_OPS[op];
+  if (!info) return null;
+
+  const value = rawValue.trim();
+  const known = symbolTable ? symbolTable.knownIdentifiersIn(value, scope) : [];
+  const valuePhrase = known.length === 1 && value === known[0]
+    ? symbolTable.describe(known[0], scope)
+    : mdCode(value);
+
+  return `${info.verb} the variable \`${name}\` ${info.prep} ${valuePhrase}.`;
+}
+
+/**
+ * Explains a standalone increment/decrement line (`count++`, `--i`).
+ * Same rationale as explainAugmentedAssignment above — these are
+ * extremely common in C-style `for` loops and were previously falling
+ * through to the generic fallback text.
+ */
+export function explainIncrementDecrement(trimmed) {
+  const postfix = trimmed.match(/^([A-Za-z_$][\w$]*)\s*(\+\+|--)\s*;?$/);
+  const prefix = !postfix && trimmed.match(/^(\+\+|--)\s*([A-Za-z_$][\w$]*)\s*;?$/);
+  if (!postfix && !prefix) return null;
+
+  const name = postfix ? postfix[1] : prefix[2];
+  const op = postfix ? postfix[2] : prefix[1];
+  const verb = op === "++" ? "Increases" : "Decreases";
+  return `${verb} the variable \`${name}\` by 1.`;
+}
+
 /**
  * Wrap raw source text as a Markdown inline code span, safely.
  *
