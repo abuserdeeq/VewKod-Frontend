@@ -27,4 +27,13 @@ describe("Header", () => {
     await user.click(screen.getByRole("button", { name: /open explanation history/i }));
     expect(onOpenHistory).toHaveBeenCalledTimes(1);
   });
+
+  it("calls onOpenAuth when the Login button is clicked", async () => {
+    const user = userEvent.setup();
+    const onOpenAuth = vi.fn();
+    render(<Header onOpenAuth={onOpenAuth} />);
+
+    await user.click(screen.getByRole("button", { name: /login/i }));
+    expect(onOpenAuth).toHaveBeenCalledTimes(1);
+  });
 });
