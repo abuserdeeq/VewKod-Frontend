@@ -9,7 +9,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "https://vewkod.onrend
 // The actual engine now lives in ./localEngine — split into a
 // core runner + symbol table, and one language-specific analyzer
 // per supported language (Python, JavaScript, TypeScript, Java,
-// C, C++, HTML, CSS, SQL). See src/localEngine/ for details.
+// C, C++, SQL, and more). See src/localEngine/ for details.
 // ============================================================
 import { generateLocalExplanation } from "./localEngine/core/engineRunner.js";
 
