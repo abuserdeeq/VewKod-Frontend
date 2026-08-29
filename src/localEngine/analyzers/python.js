@@ -11,7 +11,7 @@ export const functionStartRegex = /^def\s+([A-Za-z_]\w*)/;
 export function detect(code) {
   // Require Python's distinctive `def name(...):` header (colon after
   // the parameter list) rather than a bare `def`/`print` keyword —
-  // those also appear in Ruby (`def greet`) and Swift (`print(x)`).
+  // `print(x)` also appears in Swift.
   const hasPythonDef = /^\s*def\s+\w+\s*\([^)]*\)\s*:\s*$/m.test(code);
   const hasElif = /\belif\b/.test(code);
   const hasColonBlocks = /:\s*(#.*)?$/m.test(code) && !/[{};]/.test(code);
