@@ -13,9 +13,7 @@ import {
 
 // PrismJS - Import in CORRECT dependency order
 import Prism from "prismjs";
-import "prismjs/components/prism-markup";
 import "prismjs/components/prism-clike";
-import "prismjs/components/prism-css";
 import "prismjs/components/prism-javascript";
 import "prismjs/components/prism-typescript";
 import "prismjs/components/prism-python";
@@ -26,7 +24,6 @@ import "prismjs/components/prism-csharp";
 import "prismjs/components/prism-go";
 import "prismjs/components/prism-rust";
 import "prismjs/components/prism-php";
-import "prismjs/components/prism-ruby";
 import "prismjs/components/prism-swift";
 import "prismjs/components/prism-kotlin";
 import "prismjs/components/prism-sql";
@@ -47,13 +44,10 @@ const prismLanguageMap = {
   go: "go",
   rust: "rust",
   php: "php",
-  ruby: "ruby",
   swift: "swift",
   kotlin: "kotlin",
   sql: "sql",
   bash: "bash",
-  html: "markup",
-  css: "css",
   auto: "javascript",
 };
 
