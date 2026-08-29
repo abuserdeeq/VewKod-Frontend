@@ -96,12 +96,9 @@ export const LANGUAGES = [
   { id: "go", name: "Go", icon: "🐹" },
   { id: "rust", name: "Rust", icon: "🦀" },
   { id: "php", name: "PHP", icon: "🐘" },
-  { id: "ruby", name: "Ruby", icon: "💎" },
   { id: "swift", name: "Swift", icon: "🍎" },
   { id: "kotlin", name: "Kotlin", icon: "📱" },
   { id: "sql", name: "SQL", icon: "🗄️" },
   { id: "bash", name: "Bash", icon: "🐚" },
-  { id: "html", name: "HTML", icon: "🌐" },
-  { id: "css", name: "CSS", icon: "🎨" },
   { id: "auto", name: "Auto Detect", icon: "🔍" },
 ];
