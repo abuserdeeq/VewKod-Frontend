@@ -166,6 +166,119 @@ export function explainIncrementDecrement(trimmed) {
 }
 
 /**
+ * Splits `text` on commas that sit at bracket-depth 0 — i.e. commas
+ * that aren't inside `(...)`, `[...]`, or `{...}`. Used for parallel
+ * assignment (`a, b = b, a`) and comprehension targets, where a naive
+ * `text.split(",")` would incorrectly break apart a function call's
+ * argument list or a literal.
+ */
+export function splitTopLevel(text) {
+  const parts = [];
+  let depth = 0;
+  let current = "";
+  for (const ch of text) {
+    if ("([{".includes(ch)) depth++;
+    if (")]}".includes(ch)) depth--;
+    if (ch === "," && depth === 0) {
+      parts.push(current.trim());
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  if (current.trim()) parts.push(current.trim());
+  return parts;
+}
+
+/**
+ * Explains parallel/multiple assignment (`a, b = b, a`, `x, y = 1, 2`,
+ * `a, b = divmod(x, y)`). Without this, a line with more than one
+ * target on the left falls straight through to the generic fallback,
+ * since the single-name assignment regex requires exactly one
+ * identifier before `=`. Returns null if `trimmed` isn't this shape.
+ */
+export function explainMultipleAssignment(trimmed) {
+  const match = trimmed.match(/^([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)+)\s*=\s*(?!=)(.+?);?$/);
+  if (!match) return null;
+
+  const targets = match[1].split(",").map((t) => t.trim());
+  const valuesRaw = match[2].trim();
+  const values = splitTopLevel(valuesRaw);
+
+  if (values.length === targets.length) {
+    // Classic swap idiom: `a, b = b, a`
+    if (targets.length === 2 && values[0] === targets[1] && values[1] === targets[0]) {
+      return `Swaps the values of \`${targets[0]}\` and \`${targets[1]}\` using parallel assignment (both sides are evaluated before either variable is updated).`;
+    }
+    const pairs = targets.map((t, i) => `\`${t}\` becomes ${mdCode(values[i])}`).join(", ");
+    return `Assigns several variables at once (parallel assignment): ${pairs}.`;
+  }
+
+  return `Unpacks ${mdCode(valuesRaw)} into ${targets.map((t) => `\`${t}\``).join(", ")} in a single line.`;
+}
+
+/**
+ * Explains a C-style ternary/conditional expression used as an assigned
+ * value (`status = age >= 18 ? "adult" : "minor"`). Without this, the
+ * whole right-hand side just gets wrapped in a single code span with no
+ * indication that it branches. Returns null if `value` isn't this shape.
+ * (Uses first-`?` / last-`:` splitting rather than a full parser, so it
+ * can be fooled by nested ternaries or stray `?`/`:` inside strings —
+ * acceptable for a lightweight, regex-based local engine.)
+ */
+export function explainTernary(name, value) {
+  const v = value.trim();
+  const qIndex = v.indexOf("?");
+  if (qIndex === -1) return null;
+
+  const condition = v.slice(0, qIndex).trim();
+  const rest = v.slice(qIndex + 1);
+  const colonIndex = rest.lastIndexOf(":");
+  if (colonIndex === -1) return null;
+
+  const whenTrue = rest.slice(0, colonIndex).trim();
+  const whenFalse = rest.slice(colonIndex + 1).trim();
+  if (!condition || !whenTrue || !whenFalse) return null;
+
+  return `Assigns \`${name}\` to ${mdCode(whenTrue)} if ${mdCode(condition)} is true, otherwise ${mdCode(whenFalse)} — a conditional (ternary) expression.`;
+}
+
+/**
+ * Explains a Python list/set/dict comprehension used as an assigned
+ * value (`squares = [x*2 for x in nums]`). Without this, comprehensions
+ * just get the generic "Creates the list `squares` containing ..."
+ * treatment, which doesn't call out the for/if structure driving them.
+ * Returns null if `value` isn't a comprehension.
+ */
+export function explainComprehension(name, value) {
+  const v = value.trim();
+
+  // Dict comprehension: {key: value for target in iterable [if cond]}
+  // Checked first so a colon in the head doesn't get misread as a set.
+  const dict = v.match(/^\{(.+?):(.+?)\s+for\s+(.+?)\s+in\s+(.+?)(?:\s+if\s+(.+))?\}$/s);
+  if (dict) {
+    const [, key, val, target, iterable, cond] = dict;
+    const condPart = cond ? ` (only when \`${cond.trim()}\` is true)` : "";
+    return `Creates the dictionary \`${name}\` by mapping \`${key.trim()}\` to \`${val.trim()}\` for each \`${target.trim()}\` in \`${iterable.trim()}\`${condPart} — a dict comprehension.`;
+  }
+
+  // List or set comprehension: [expr for target in iterable if cond] / {expr for ...}
+  const listOrSet = v.match(/^([[{])(.+?)\s+for\s+(.+?)\s+in\s+(.+?)(?:\s+if\s+(.+))?([\]}])$/s);
+  if (listOrSet) {
+    const [, open, expr, target, iterable, cond, close] = listOrSet;
+    const isList = open === "[" && close === "]";
+    const isSet = open === "{" && close === "}";
+    if (isList || isSet) {
+      const kind = isList ? "list" : "set";
+      const condPart = cond ? ` (only when \`${cond.trim()}\` is true)` : "";
+      return `Creates the ${kind} \`${name}\` by evaluating \`${expr.trim()}\` for each \`${target.trim()}\` in \`${iterable.trim()}\`${condPart} — a ${kind} comprehension.`;
+    }
+  }
+
+  return null;
+}
+
+/**
  * Wrap raw source text as a Markdown inline code span, safely.
  *
  * A plain single backtick wrap (`` `${value}` ``) breaks as soon as the
