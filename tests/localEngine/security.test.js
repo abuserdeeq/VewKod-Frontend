@@ -211,3 +211,35 @@ test("Does not flag ordinary, safe code with new false positives", () => {
   );
   assert.match(issuesSection(out), /No obvious issues were detected/);
 });
+
+test("Flags a hard-coded $pass/pwd credential, not just *password*", () => {
+  const phpOut = generateLocalExplanation(
+    '<?php\n$pass = "hardcoded123";\necho $pass;',
+    "php"
+  );
+  assert.match(issuesSection(phpOut), /hard-coded secret or credential/);
+
+  const pwdOut = generateLocalExplanation(
+    'pwd = "hardcoded123"\nprint(pwd)',
+    "python"
+  );
+  assert.match(issuesSection(pwdOut), /hard-coded secret or credential/);
+});
+
+test("Does not flag an unrelated identifier that merely ends in 'pass'", () => {
+  const out = generateLocalExplanation(
+    'compass = "north"\nprint(compass)',
+    "python"
+  );
+  assert.doesNotMatch(issuesSection(out), /hard-coded secret or credential/);
+});
+
+test("Flags hard-coded private keys and client secrets", () => {
+  const out = generateLocalExplanation(
+    'private_key = "-----BEGIN RSA PRIVATE KEY-----"\nclient_secret = "abc123"',
+    "python"
+  );
+  const section = issuesSection(out);
+  const matches = section.match(/hard-coded secret or credential/g) || [];
+  assert.equal(matches.length, 2);
+});
