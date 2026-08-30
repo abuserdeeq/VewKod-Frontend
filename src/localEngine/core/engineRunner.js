@@ -128,6 +128,7 @@ function buildKeyConcepts(structure) {
     text += `- The snippet contains basic executable statements.\n`;
   }
 
+  text += `\n`;
   return text;
 }
 
