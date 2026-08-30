@@ -51,7 +51,11 @@ const prismLanguageMap = {
   auto: "javascript",
 };
 
-const CodeInput = forwardRef(function CodeInput({ onExplain, onCancel, loading }, ref) {
+const isMac =
+  typeof navigator !== "undefined" &&
+  /Mac|iPhone|iPod|iPad/.test(navigator.platform || navigator.userAgent || "");
+
+const CodeInput = forwardRef(function CodeInput({ onExplain, onCancel, loading, onWarn }, ref) {
   const [code, setCode] = useState("");
   const [language, setLanguage] = useState("python");
   const [showLangDropdown, setShowLangDropdown] = useState(false);
@@ -269,7 +273,14 @@ const CodeInput = forwardRef(function CodeInput({ onExplain, onCancel, loading }
           <Editor
             value={code}
             onValueChange={(newCode) => {
-              if (newCode.length <= MAX_CHARS) {
+              // Previously silently ignored any paste/edit that pushed the
+              // text past MAX_CHARS — nothing happened at all, with no
+              // feedback, which looked like the editor was broken. Now it
+              // truncates to the limit and tells the user why.
+              if (newCode.length > MAX_CHARS) {
+                setCode(newCode.slice(0, MAX_CHARS));
+                onWarn?.(`Code truncated to ${MAX_CHARS.toLocaleString()} characters.`);
+              } else {
                 setCode(newCode);
               }
             }}
@@ -291,7 +302,17 @@ const CodeInput = forwardRef(function CodeInput({ onExplain, onCancel, loading }
       </div>
 
       {/* Action Bar */}
-      <div className="flex justify-end">
+      <div className="flex items-center justify-between">
+        <span className="hidden sm:inline-flex items-center gap-1.5 text-xs text-slate-600">
+          <kbd className="px-1.5 py-0.5 rounded-md bg-[#1e293b] border border-slate-700/40 font-mono text-[10px] text-slate-500">
+            {isMac ? "⌘" : "Ctrl"}
+          </kbd>
+          <kbd className="px-1.5 py-0.5 rounded-md bg-[#1e293b] border border-slate-700/40 font-mono text-[10px] text-slate-500">
+            Enter
+          </kbd>
+          to run
+        </span>
+
         {loading ? (
           <motion.button
             onClick={onCancel}

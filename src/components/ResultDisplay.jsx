@@ -188,11 +188,32 @@ export default function ResultDisplay({ result, source = "ai", onClear }) {
                     {children}
                   </ol>
                 ),
-                li: ({ children }) => (
-                  <li className="text-slate-300 leading-relaxed">
-                    {children}
-                  </li>
-                ),
+                li: ({ children }) => {
+                  // Issue lines from the local engine start with a
+                  // severity icon (🔐 security, ⚠️ warning, 💡
+                  // review/tip). Detect it and give that item a colored
+                  // left border + tint so severity is scannable at a
+                  // glance instead of every issue looking the same as
+                  // an ordinary list item (e.g. a plain function/variable
+                  // entry from the Structure Breakdown section).
+                  const childArray = Array.isArray(children) ? children : [children];
+                  const firstText = typeof childArray[0] === "string" ? childArray[0] : "";
+
+                  let severityClass = "";
+                  if (firstText.startsWith("🔐")) {
+                    severityClass = "list-none pl-3 py-1.5 my-1 rounded-r-md border-l-2 border-red-500/50 bg-red-500/5";
+                  } else if (firstText.startsWith("⚠️")) {
+                    severityClass = "list-none pl-3 py-1.5 my-1 rounded-r-md border-l-2 border-amber-500/50 bg-amber-500/5";
+                  } else if (firstText.startsWith("💡")) {
+                    severityClass = "list-none pl-3 py-1.5 my-1 rounded-r-md border-l-2 border-blue-500/50 bg-blue-500/5";
+                  }
+
+                  return (
+                    <li className={`text-slate-300 leading-relaxed ${severityClass}`}>
+                      {children}
+                    </li>
+                  );
+                },
                 code({ inline, className, children, ...props }) {
                   const match = /language-(\w+)/.exec(className || "");
                   const language = match ? match[1] : "text";
