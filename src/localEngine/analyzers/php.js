@@ -1,4 +1,4 @@
-import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement, explainTernary, explainClassicForLoop } from "../shared/patterns.js";
+import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement, explainTernary, explainClassicForLoop , explainBraceTryCatch, explainBareFunctionCall } from "../shared/patterns.js";
 
 export const id = "php";
 export const label = "PHP";
@@ -56,7 +56,7 @@ export function buildSymbolTable(lines, symbolTable, lineScopes = []) {
 
     const scope = lineScopes[index] || "global";
 
-    const fn = line.match(/^function\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/);
+    const fn = line.match(/^(?:(?:public|private|protected|static|final|abstract)\s+)*function\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/);
     if (fn) {
       symbolTable.add(fn[1], "function", { parameters: fn[2].trim() }, scope);
       const fnScope = `${scope}>${fn[1]}#${index}`;
@@ -90,7 +90,7 @@ export function analyzeStructure(lines) {
     if (isCommentLine(line)) result.comments.push(lineNumber);
     if (/^(require|include)(_once)?\b/.test(line)) result.imports.push(lineNumber);
 
-    const fn = line.match(/^function\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/);
+    const fn = line.match(/^(?:(?:public|private|protected|static|final|abstract)\s+)*function\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/);
     if (fn) result.functions.push({ line: lineNumber, name: fn[1], parameters: fn[2] });
 
     const cls = line.match(/\bclass\s+([A-Za-z_]\w*)/);
@@ -119,7 +119,7 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   const cls = trimmed.match(/\bclass\s+([A-Za-z_]\w*)/);
   if (cls) return `Defines the class \`${cls[1]}\`, which can serve as a blueprint for creating objects.`;
 
-  const fn = trimmed.match(/^function\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/);
+  const fn = trimmed.match(/^(?:(?:public|private|protected|static|final|abstract)\s+)*function\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/);
   if (fn) {
     return fn[2].trim()
       ? `Defines the function \`${fn[1]}\`, which accepts \`${fn[2].trim()}\` as parameter(s).`
@@ -144,6 +144,29 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   }
   if (/^\}?\s*else\b/.test(trimmed)) return "Defines the alternative block that runs when the previous condition is false.";
 
+  const throwMatch = trimmed.match(/^throw\s+new\s+([A-Za-z_]\w*)\s*\((.*)\)\s*;?$/);
+  if (throwMatch) {
+    const [, exClass, args] = throwMatch;
+    return args.trim()
+      ? `Throws a new \`${exClass}\` exception with the message \`${args.trim()}\`, immediately stopping normal execution (handled by a \`catch\` block, if one is present).`
+      : `Throws a new \`${exClass}\` exception, immediately stopping normal execution (handled by a \`catch\` block, if one is present).`;
+  }
+
+  // PHP 8's `match` expression — strict comparison, no fallthrough, and
+  // (unlike `switch`) it's an EXPRESSION that produces a value. Handled
+  // as three shapes: the opening `match($x) {` header, each
+  // `condition(s) => result,` arm, and the closing `};`.
+  const matchHeader = trimmed.match(/^(?:\$?[A-Za-z_]\w*\s*=\s*)?match\s*\((.+?)\)\s*\{?$/);
+  if (matchHeader) return `Starts a \`match\` expression on \`${matchHeader[1].trim()}\`: evaluates the arms below in order and produces the value from the first one whose condition(s) strictly equal it.`;
+
+  const matchArm = trimmed.match(/^(default|.+?)\s*=>\s*(.+?),?$/);
+  if (matchArm && !/^function\b|^if\b|^foreach\b|^fn\s*\(|^\$\w+\s*=>/.test(trimmed)) {
+    const [, conditions, result] = matchArm;
+    return conditions.trim() === "default"
+      ? `Default arm: if none of the earlier conditions matched, the \`match\` expression produces \`${result.trim()}\`.`
+      : `If the matched value strictly equals \`${conditions.trim()}\`, the \`match\` expression produces \`${result.trim()}\`.`;
+  }
+
   const ret = trimmed.match(/^return\b\s*(.*?);?$/);
   if (ret) return ret[1].trim() ? `Returns \`${ret[1].trim()}\` from the current function.` : "Returns control from the current function.";
 
@@ -166,13 +189,19 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
     return call[2].trim() ? `Calls ${label} with the provided argument(s).` : `Calls ${label} without arguments.`;
   }
 
-  if (["}"].includes(trimmed)) return "Closes the current code block.";
+  if (["}", "};"].includes(trimmed)) return "Closes the current code block.";
 
   const incDec = explainIncrementDecrement(trimmed);
   if (incDec) return incDec;
 
   const augmented = explainAugmentedAssignment(trimmed, symbolTable, scope);
   if (augmented) return augmented;
+
+  const tryCatch = explainBraceTryCatch(trimmed);
+  if (tryCatch) return tryCatch;
+
+  const bareCall = explainBareFunctionCall(trimmed, symbolTable, scope);
+  if (bareCall) return bareCall;
 
   return genericFallbackExplanation();
 }

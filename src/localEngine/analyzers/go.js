@@ -1,4 +1,4 @@
-import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement, explainGoForLoop } from "../shared/patterns.js";
+import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement, explainGoForLoop , explainBareFunctionCall , explainLoneOpenBrace } from "../shared/patterns.js";
 
 export const id = "go";
 export const label = "Go";
@@ -97,6 +97,9 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   if (!trimmed) return null;
   if (isCommentLine(trimmed)) return commentExplanation();
 
+  const loneBrace = explainLoneOpenBrace(trimmed);
+  if (loneBrace) return loneBrace;
+
   if (/^package\s+\w+/.test(trimmed)) return "Declares which package this file belongs to.";
   if (/^import\b/.test(trimmed)) return "Starts an import block, bringing in other packages.";
   if (/^\s*"[\w/]+"\s*$/.test(trimmed)) return `Imports the \`${trimmed.replace(/"/g, "")}\` package.`;
@@ -128,6 +131,23 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   }
   if (/^\}?\s*else\b/.test(trimmed)) return "Defines the alternative block that runs when the previous condition is false.";
 
+  // `defer`, `go`, `panic`/`recover` are common Go-specific constructs
+  // with no equivalent shape in the other rules above, so without
+  // explicit handling they were all silently falling through to the
+  // generic fallback text.
+  const deferMatch = trimmed.match(/^defer\s+(.+?);?$/);
+  if (deferMatch) return `Schedules \`${deferMatch[1].trim()}\` to run right before the surrounding function returns, no matter how it returns (Go's \`defer\`) — commonly used for cleanup like closing a file or connection.`;
+
+  const goStmt = trimmed.match(/^go\s+(.+?);?$/);
+  if (goStmt) return `Starts \`${goStmt[1].trim()}\` running concurrently in a new goroutine, without waiting for it to finish.`;
+
+  const panicMatch = trimmed.match(/^panic\s*\((.*)\)\s*;?$/);
+  if (panicMatch) return panicMatch[1].trim()
+    ? `Panics with \`${panicMatch[1].trim()}\`, immediately stopping normal execution and unwinding the call stack (recoverable only via a deferred \`recover()\`).`
+    : "Panics, immediately stopping normal execution and unwinding the call stack.";
+
+  if (/^(?:[A-Za-z_]\w*\s*:?=\s*)?recover\s*\(\s*\)\s*;?$/.test(trimmed)) return "Recovers from a panic in progress in the current goroutine, if there is one, stopping the unwind and letting execution continue.";
+
   const ret = trimmed.match(/^return\b\s*(.*)$/);
   if (ret) return ret[1].trim() ? `Returns \`${ret[1].trim()}\` from the current function.` : "Returns control from the current function.";
 
@@ -147,13 +167,16 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
       : `Calls \`${callExpr.trim()}\`, assigning the results to \`${first}\` and \`${second}\`.`;
   }
 
-  if (["}"].includes(trimmed)) return "Closes the current code block.";
+  if (["}", "};"].includes(trimmed)) return "Closes the current code block.";
 
   const incDec = explainIncrementDecrement(trimmed);
   if (incDec) return incDec;
 
   const augmented = explainAugmentedAssignment(trimmed, symbolTable, scope);
   if (augmented) return augmented;
+
+  const bareCall = explainBareFunctionCall(trimmed, symbolTable, scope);
+  if (bareCall) return bareCall;
 
   return genericFallbackExplanation();
 }

@@ -1,4 +1,4 @@
-import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement, explainTernary, explainClassicForLoop } from "../shared/patterns.js";
+import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement, explainTernary, explainClassicForLoop , explainBraceTryCatch, explainBareFunctionCall , explainLoneOpenBrace } from "../shared/patterns.js";
 
 export const id = "java";
 export const label = "Java";
@@ -87,6 +87,9 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   if (!trimmed) return null;
   if (isCommentLine(trimmed)) return commentExplanation();
 
+  const loneBrace = explainLoneOpenBrace(trimmed);
+  if (loneBrace) return loneBrace;
+
   if (/^import\b/.test(trimmed)) return "Imports a class or package so it can be used in this file.";
 
   const cls = trimmed.match(/\bclass\s+([A-Za-z_$][\w$]*)/);
@@ -142,6 +145,12 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
 
   const augmented = explainAugmentedAssignment(trimmed, symbolTable, scope);
   if (augmented) return augmented;
+
+  const tryCatch = explainBraceTryCatch(trimmed);
+  if (tryCatch) return tryCatch;
+
+  const bareCall = explainBareFunctionCall(trimmed, symbolTable, scope);
+  if (bareCall) return bareCall;
 
   return genericFallbackExplanation();
 }

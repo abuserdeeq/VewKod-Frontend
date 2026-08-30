@@ -1,4 +1,4 @@
-import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement, explainTernary, explainClassicForLoop } from "../shared/patterns.js";
+import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement, explainTernary, explainClassicForLoop , explainBraceTryCatch, explainBareFunctionCall , explainLoneOpenBrace } from "../shared/patterns.js";
 
 export const id = "csharp";
 export const label = "C#";
@@ -6,7 +6,7 @@ export const label = "C#";
 // Function-level scoping (see shared/patterns.js computeLineScopes):
 // C# method bodies are brace-delimited.
 export const scopeStyle = "brace";
-export const functionStartRegex = /^(?:public|private|protected|internal)?\s*(?:static\s+)?[\w<>\[\], ]+\s+([A-Za-z_]\w*)\s*\(/;
+export const functionStartRegex = /^(?:public|private|protected|internal)?\s*(?:static\s+)?(?:async\s+)?[\w<>\[\],? ]+\s+([A-Za-z_]\w*)\s*\(/;
 
 export function detect(code) {
   return /\busing\s+System\b/.test(code) || /\bConsole\.(Write|WriteLine)\s*\(/.test(code) || /\bnamespace\s+\w+/.test(code);
@@ -35,14 +35,14 @@ export function buildSymbolTable(lines, symbolTable, lineScopes = []) {
     const cls = line.match(/\bclass\s+([A-Za-z_]\w*)/);
     if (cls) symbolTable.add(cls[1], "class", {}, scope);
 
-    const method = line.match(/^(?:public|private|protected|internal)?\s*(?:static\s+)?[\w<>\[\], ]+\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*\{?$/);
+    const method = line.match(/^(?:public|private|protected|internal)?\s*(?:static\s+)?(?:async\s+)?[\w<>\[\],? ]+\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*\{?$/);
     if (method && !/\b(if|for|foreach|while|switch)\b/.test(line)) {
       symbolTable.add(method[1], "function", { parameters: method[2].trim() }, scope);
       const fnScope = `${scope}>${method[1]}#${index}`;
       method[2].split(",").map((p) => p.trim().split(/\s+/).pop()).filter(Boolean).forEach((p) => symbolTable.add(p, "parameter", {}, fnScope));
     }
 
-    const decl = line.match(/^(?:public|private|protected|internal)?\s*(?:static\s+)?(?:readonly\s+)?([\w<>\[\], ]+?)\s+([A-Za-z_]\w*)\s*=\s*(.+);/);
+    const decl = line.match(/^(?:public|private|protected|internal)?\s*(?:static\s+)?(?:readonly\s+)?([\w<>\[\],? ]+?)\s+([A-Za-z_]\w*)\s*=\s*(.+);/);
     if (decl) symbolTable.add(decl[2], decl[1].trim() === "var" ? "variable" : typeRole(decl[1]), {}, scope);
 
     const forEach = line.match(/^foreach\s*\(\s*(?:var|[\w<>\[\]]+)\s+([A-Za-z_]\w*)\s+in\s+([A-Za-z_]\w*)\s*\)/);
@@ -68,7 +68,7 @@ export function analyzeStructure(lines) {
     const cls = line.match(/\bclass\s+([A-Za-z_]\w*)/);
     if (cls) result.classes.push({ line: lineNumber, name: cls[1] });
 
-    const method = line.match(/^(?:public|private|protected|internal)?\s*(?:static\s+)?[\w<>\[\], ]+\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*\{?$/);
+    const method = line.match(/^(?:public|private|protected|internal)?\s*(?:static\s+)?(?:async\s+)?[\w<>\[\],? ]+\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*\{?$/);
     if (method && !/\b(if|for|foreach|while|switch)\b/.test(line)) result.functions.push({ line: lineNumber, name: method[1], parameters: method[2] });
 
     if (/^(for|while)\s*\(/.test(line) || /^foreach\s*\(/.test(line)) result.loops.push(lineNumber);
@@ -85,12 +85,23 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   if (!trimmed) return null;
   if (isCommentLine(trimmed)) return commentExplanation();
 
+  const loneBrace = explainLoneOpenBrace(trimmed);
+  if (loneBrace) return loneBrace;
+
   if (/^using\s+[\w.]+;/.test(trimmed)) return "Imports a namespace so its classes/functions can be used without full qualification.";
+
+  // `using (resource) { ... }` — resource-scope form (same keyword as the
+  // import form above, completely different meaning): guarantees
+  // Dispose() is called on the resource when the block ends, even if an
+  // exception is thrown. Must be checked before the plain-import rule's
+  // sibling checks below would otherwise leave it unhandled.
+  const usingStmt = trimmed.match(/^using\s*\((.+?)\)\s*\{?$/);
+  if (usingStmt) return `Opens \`${usingStmt[1].trim()}\` and guarantees it will be disposed (its \`Dispose()\` called) as soon as this block ends, even if an exception is thrown.`;
 
   const cls = trimmed.match(/\bclass\s+([A-Za-z_]\w*)/);
   if (cls) return `Defines the class \`${cls[1]}\`, which can serve as a blueprint for creating objects.`;
 
-  const method = trimmed.match(/^(?:public|private|protected|internal)?\s*(?:static\s+)?([\w<>\[\], ]+?)\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*\{?$/);
+  const method = trimmed.match(/^(?:public|private|protected|internal)?\s*(?:static\s+)?(?:async\s+)?([\w<>\[\],? ]+?)\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*\{?$/);
   if (method && !/\b(if|for|foreach|while|switch)\b/.test(trimmed)) {
     const [, returnType, name, params] = method;
     return params.trim()
@@ -122,7 +133,7 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   const write = trimmed.match(/Console\.(Write|WriteLine)\s*\((.*)\)\s*;?$/);
   if (write) return `Prints \`${write[2].trim()}\` to the console${write[1] === "WriteLine" ? " with a trailing newline" : ""}.`;
 
-  const decl = trimmed.match(/^(?:public|private|protected|internal)?\s*(?:static\s+)?(?:readonly\s+)?([\w<>\[\], ]+?)\s+([A-Za-z_]\w*)\s*=\s*(.+);/);
+  const decl = trimmed.match(/^(?:public|private|protected|internal)?\s*(?:static\s+)?(?:readonly\s+)?([\w<>\[\],? ]+?)\s+([A-Za-z_]\w*)\s*=\s*(.+);/);
   if (decl) {
     const ternary = explainTernary(decl[2], decl[3]);
     if (ternary) return ternary;
@@ -136,6 +147,12 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
 
   const augmented = explainAugmentedAssignment(trimmed, symbolTable, scope);
   if (augmented) return augmented;
+
+  const tryCatch = explainBraceTryCatch(trimmed);
+  if (tryCatch) return tryCatch;
+
+  const bareCall = explainBareFunctionCall(trimmed, symbolTable, scope);
+  if (bareCall) return bareCall;
 
   return genericFallbackExplanation();
 }

@@ -1,4 +1,4 @@
-import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainTernary } from "../shared/patterns.js";
+import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainTernary , explainBareFunctionCall , explainLoneOpenBrace } from "../shared/patterns.js";
 
 export const id = "swift";
 export const label = "Swift";
@@ -85,6 +85,9 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   if (!trimmed) return null;
   if (isCommentLine(trimmed)) return commentExplanation();
 
+  const loneBrace = explainLoneOpenBrace(trimmed);
+  if (loneBrace) return loneBrace;
+
   if (/^import\s+\w+/.test(trimmed)) return "Imports a framework so its types/functions can be used in this file.";
 
   const cls = trimmed.match(/\b(class|struct)\s+([A-Za-z_]\w*)/);
@@ -104,6 +107,28 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
     return `Iterates over ${phrase}; on each pass, \`${forLoop[1]}\` represents the current item.`;
   }
   if (/^while\s+/.test(trimmed)) return "Starts a while loop that keeps running while its condition stays true.";
+
+  // `guard let`/`guard` — Swift's "early exit" construct: unlike `if`,
+  // the bound value stays in scope for the REST of the enclosing
+  // function, and the `else` branch is required to leave (return/break/
+  // continue/throw). Handled before the generic `if` rule below since
+  // it's a completely different control-flow shape, not a plain condition.
+  const guardLet = trimmed.match(/^guard\s+let\s+([A-Za-z_]\w*)\s*=\s*(.+?)\s*else\s*\{?$/);
+  if (guardLet) {
+    const [, name, expr] = guardLet;
+    return `Unwraps \`${expr.trim()}\`; if it's \`nil\`, runs the \`else\` block below (which must exit this function), otherwise makes the value available as \`${name}\` for the rest of the function (Swift's \`guard let\`).`;
+  }
+  const guardMatch = trimmed.match(/^guard\s+(.+?)\s*else\s*\{?$/);
+  if (guardMatch) return `Checks whether \`${guardMatch[1].trim()}\` is true; if not, runs the \`else\` block below (which must exit this function) — Swift's early-exit \`guard\`.`;
+
+  // `if let`/`if var` optional binding — also not a boolean check, so
+  // it needs its own wording rather than falling into the generic
+  // `if` rule (which would misleadingly say "is true").
+  const ifLet = trimmed.match(/^if\s+(?:let|var)\s+([A-Za-z_]\w*)\s*=\s*(.+?)\s*\{?$/);
+  if (ifLet) {
+    const [, name, expr] = ifLet;
+    return `If \`${expr.trim()}\` isn't \`nil\`, unwraps it and makes it available as \`${name}\` inside this block (Swift's optional binding).`;
+  }
 
   const ifMatch = trimmed.match(/^if\s+(.+?)\s*\{?$/);
   if (ifMatch) {
@@ -126,13 +151,25 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
     const kind = decl[1] === "let" ? "constant" : "variable";
     const ternary = explainTernary(decl[2], decl[3]);
     if (ternary) return ternary;
+
+    // Nil-coalescing (`a ?? b`): worth calling out specifically since
+    // `??` reads very differently from a normal assignment — it's
+    // "unwrap-or-default", not just "assign this whole expression".
+    const nilCoalesce = decl[3].match(/^(.+?)\s*\?\?\s*(.+?);?$/);
+    if (nilCoalesce) {
+      return `Declares the ${kind} \`${decl[2]}\`: uses \`${nilCoalesce[1].trim()}\` if it isn't \`nil\`, otherwise falls back to \`${nilCoalesce[2].trim()}\` (Swift's nil-coalescing \`??\`).`;
+    }
+
     return `Declares the ${kind} \`${decl[2]}\` and assigns it \`${decl[3]}\`.`;
   }
 
-  if (["}"].includes(trimmed)) return "Closes the current code block.";
+  if (["}", "};"].includes(trimmed)) return "Closes the current code block.";
 
   const augmented = explainAugmentedAssignment(trimmed, symbolTable, scope);
   if (augmented) return augmented;
+
+  const bareCall = explainBareFunctionCall(trimmed, symbolTable, scope);
+  if (bareCall) return bareCall;
 
   return genericFallbackExplanation();
 }

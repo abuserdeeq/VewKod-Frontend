@@ -1,4 +1,4 @@
-import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement, explainTernary, explainClassicForLoop } from "../shared/patterns.js";
+import { isCommentLineExcludingHash as isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement, explainTernary, explainClassicForLoop , explainBareFunctionCall , explainLoneOpenBrace } from "../shared/patterns.js";
 
 export const id = "c";
 export const label = "C";
@@ -72,12 +72,24 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   if (!trimmed) return null;
   if (isCommentLine(trimmed)) return commentExplanation();
 
+  const loneBrace = explainLoneOpenBrace(trimmed);
+  if (loneBrace) return loneBrace;
+
   if (/^#include\s*<(.+)>/.test(trimmed)) {
     const m = trimmed.match(/^#include\s*<(.+)>/);
     return `Includes the \`${m[1]}\` header, giving access to its functions/macros.`;
   }
 
-  const fn = trimmed.match(/^(?:static\s+)?[\w]+\s*\*?\s*([A-Za-z_]\w*)\s*\(([^)]*)\)\s*\{?$/);
+  const structDecl = trimmed.match(/^struct\s+([A-Za-z_]\w*)\s*\{?$/);
+  if (structDecl) return `Defines the \`${structDecl[1]}\` struct, which can hold a group of related fields.`;
+
+  // Function/return-type detection needs to accept multi-word types
+  // (`struct Node *`, `unsigned long`, `const char *`) — a single
+  // `[\w]+` was only ever matching one-word types like `int`/`void`,
+  // so any function returning a pointer-to-struct (extremely common
+  // in real C) fell straight through to the generic fallback.
+  const TYPE = "(?:const\\s+)?(?:struct\\s+[A-Za-z_]\\w*|unsigned\\s+\\w+|[A-Za-z_]\\w*)";
+  const fn = trimmed.match(new RegExp(`^(?:static\\s+)?${TYPE}\\s*\\*?\\s*([A-Za-z_]\\w*)\\s*\\(([^)]*)\\)\\s*\\{?$`));
   if (fn && !/\b(if|for|while|switch|return)\b/.test(trimmed)) {
     return fn[2].trim()
       ? `Defines the function \`${fn[1]}\`, which accepts \`${fn[2].trim()}\` as parameter(s).`
@@ -101,14 +113,41 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   const printf = trimmed.match(/\bprintf\s*\((.*)\)\s*;?$/);
   if (printf) return `Formats and prints \`${printf[1].trim()}\` to standard output.`;
 
-  const pointer = trimmed.match(/^\w+\s*\*\s*([A-Za-z_]\w*)\s*=\s*(.+);/);
+  const mallocMatch = trimmed.match(/^(?:const\s+)?(?:struct\s+[A-Za-z_]\w*|[A-Za-z_]\w*)\s*\*\s*([A-Za-z_]\w*)\s*=\s*\(?[\w\s*]*\)?\s*(?:m|c)alloc\s*\((.+)\)\s*;$/);
+  if (mallocMatch) return `Declares the pointer \`${mallocMatch[1]}\` and allocates memory for it on the heap (\`${trimmed.includes("calloc") ? "calloc" : "malloc"}(${mallocMatch[2].trim()})\`) — this memory must later be released with \`free(${mallocMatch[1]})\`, or it leaks.`;
+
+  const pointer = trimmed.match(new RegExp(`^${TYPE}\\s*\\*\\s*([A-Za-z_]\\w*)\\s*=\\s*(.+);`));
   if (pointer) return `Declares the pointer \`${pointer[1]}\` and points it at \`${pointer[2]}\`.`;
+
+  // `ptr->field = value;` — assignment through a pointer to a struct
+  // member. Worth calling out `->` specifically (rather than treating
+  // it as an ordinary assignment) since dereferencing through a bad
+  // pointer here is a classic C crash/undefined-behavior source.
+  const arrowAssign = trimmed.match(/^([A-Za-z_]\w*)->([A-Za-z_]\w*)\s*=\s*(.+);$/);
+  if (arrowAssign) return `Sets the \`${arrowAssign[2]}\` field of the struct that \`${arrowAssign[1]}\` points to, to \`${arrowAssign[3].trim()}\`.`;
 
   const decl = trimmed.match(/^(int|char|float|double|long|short)\s+([A-Za-z_]\w*)\s*=\s*(.+);/);
   if (decl) {
     const ternary = explainTernary(decl[2], decl[3]);
     if (ternary) return ternary;
     return `Declares a \`${decl[1]}\` variable \`${decl[2]}\` and assigns it \`${decl[3]}\`.`;
+  }
+
+  // Plain reassignment of an already-declared variable (`current = next;`)
+  // — no type keyword, so it wouldn't match the typed-declaration rule
+  // above, and previously had no rule of its own at all.
+  const reassign = trimmed.match(/^([A-Za-z_]\w*)\s*=\s*(.+);$/);
+  if (reassign) return `Sets \`${reassign[1]}\` to \`${reassign[2].trim()}\`.`;
+
+  // Bare declaration, no initializer (`int value;`, `struct Node *next;`)
+  // — this is how every struct field is written, so without it, every
+  // field in every struct fell to the generic fallback.
+  const bareDecl = trimmed.match(new RegExp(`^${TYPE}\\s*(\\*)?\\s*([A-Za-z_]\\w*)\\s*;$`));
+  if (bareDecl) {
+    const [, star, name] = bareDecl;
+    return star
+      ? `Declares the pointer \`${name}\` (not yet initialized/assigned).`
+      : `Declares the variable \`${name}\` (not yet initialized/assigned).`;
   }
 
   if (["}", "};"].includes(trimmed)) return "Closes the current code block.";
@@ -118,6 +157,9 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
 
   const augmented = explainAugmentedAssignment(trimmed, symbolTable, scope);
   if (augmented) return augmented;
+
+  const bareCall = explainBareFunctionCall(trimmed, symbolTable, scope);
+  if (bareCall) return bareCall;
 
   return genericFallbackExplanation();
 }

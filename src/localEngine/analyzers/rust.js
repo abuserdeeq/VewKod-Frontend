@@ -1,4 +1,4 @@
-import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment } from "../shared/patterns.js";
+import { isCommentLineExcludingHash as isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment , explainBareFunctionCall , explainLoneOpenBrace } from "../shared/patterns.js";
 
 export const id = "rust";
 export const label = "Rust";
@@ -85,7 +85,15 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   if (!trimmed) return null;
   if (isCommentLine(trimmed)) return commentExplanation();
 
+  const loneBrace = explainLoneOpenBrace(trimmed);
+  if (loneBrace) return loneBrace;
+
   if (/^use\s+[\w:]+;/.test(trimmed)) return "Brings another module/crate's items into scope.";
+
+  const innerAttr = trimmed.match(/^#!\[(.+)\]$/);
+  if (innerAttr) return `Applies the \`#![${innerAttr[1]}]\` attribute to the whole containing module/crate (an inner attribute — note the \`!\`).`;
+  const outerAttr = trimmed.match(/^#\[(.+)\]$/);
+  if (outerAttr) return `Applies the \`#[${outerAttr[1]}]\` attribute to the item defined on the next line (e.g. auto-implementing a trait, or configuring how it's tested/compiled).`;
 
   const structDecl = trimmed.match(/^(?:pub\s+)?struct\s+([A-Za-z_]\w*)/);
   if (structDecl) return `Defines the \`${structDecl[1]}\` struct, which can hold a group of related fields.`;
@@ -106,6 +114,12 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   if (/^loop\s*\{?$/.test(trimmed)) return "Starts an intentionally infinite loop, exited with `break` elsewhere.";
   if (/^while\s+/.test(trimmed)) return "Starts a while loop that keeps running while its condition stays true.";
 
+  const ifLet = trimmed.match(/^if\s+let\s+(.+?)\s*=\s*(.+?)\s*\{?$/);
+  if (ifLet) {
+    const [, pattern, expr] = ifLet;
+    return `If \`${expr.trim()}\` matches the \`${pattern.trim()}\` pattern, destructures it and runs the code that follows (Rust's \`if let\` — a shorthand for a \`match\` with only one case handled).`;
+  }
+
   const ifMatch = trimmed.match(/^if\s+(.+?)\s*\{?$/);
   if (ifMatch) {
     const condition = ifMatch[1].trim();
@@ -116,6 +130,17 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   if (/^\}?\s*else\b/.test(trimmed)) return "Defines the alternative block that runs when the previous condition is false.";
   if (/^match\s+/.test(trimmed)) return "Starts a match expression that picks a branch based on the value's pattern.";
 
+  // A match arm (`Ok(value) => println!(...),`, `Err(e) => ...`, `_ => ...`).
+  // Without this, an arm line has no trailing `;` and doesn't open/close a
+  // block, so it was being swallowed by the implicit-return rule below and
+  // mislabeled as "the value returned from this block" — misleading, since
+  // it's one branch of a match, not the block's own trailing expression.
+  const matchArm = trimmed.match(/^(_|[A-Za-z_][\w:]*(?:\([^()]*\))?(?:\s*\|\s*[A-Za-z_][\w:]*(?:\([^()]*\))?)*)\s*(?:if\s+.+?)?=>\s*(.+?),?$/);
+  if (matchArm) {
+    const [, pattern, body] = matchArm;
+    return `Matches the \`${pattern.trim()}\` pattern; if it matches, runs \`${body.trim()}\`.`;
+  }
+
   const ret = trimmed.match(/^return\b\s*(.*?);?$/);
   if (ret) return ret[1].trim() ? `Returns \`${ret[1].trim()}\` from the current function.` : "Returns control from the current function.";
 
@@ -125,7 +150,7 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   const decl = trimmed.match(/^let\s+(mut\s+)?([A-Za-z_]\w*)\s*(?::\s*[\w<>]+)?\s*=\s*(.+);/);
   if (decl) return `Declares ${decl[1] ? "a mutable" : "an immutable"} binding \`${decl[2]}\` and assigns it \`${decl[3]}\`.`;
 
-  if (["}"].includes(trimmed)) return "Closes the current code block.";
+  if (["}", "};"].includes(trimmed)) return "Closes the current code block.";
 
   // A line with no trailing `;` and not opening/closing a block is
   // very likely Rust's implicit-return expression (the value of the
@@ -136,6 +161,9 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
 
   const augmented = explainAugmentedAssignment(trimmed, symbolTable, scope);
   if (augmented) return augmented;
+
+  const bareCall = explainBareFunctionCall(trimmed, symbolTable, scope);
+  if (bareCall) return bareCall;
 
   return genericFallbackExplanation();
 }

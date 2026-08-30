@@ -40,6 +40,12 @@ export function explainLine(rawLine, symbolTable) {
   if (!trimmed) return null;
   if (trimmed.startsWith("--") || trimmed.startsWith("/*")) return "This is a SQL comment and is not executed.";
 
+  if (/^WITH\b/i.test(trimmed)) {
+    const cte = trimmed.match(/^WITH\s+([`"]?\w+[`"]?)\s+AS\s*\(?/i);
+    return cte
+      ? `Starts a CTE (a temporary, named result set) called \`${cte[1].replace(/[`"]/g, "")}\`, which the rest of this query can reference as if it were a table.`
+      : "Starts a CTE (a temporary, named result set) that the rest of this query can reference as if it were a table.";
+  }
   if (/^SELECT\b/i.test(trimmed)) {
     const cols = trimmed.match(/^SELECT\s+(.+?)\s+FROM\b/i);
     return cols
@@ -54,15 +60,28 @@ export function explainLine(rawLine, symbolTable) {
     const cond = trimmed.replace(/^WHERE\s*/i, "");
     return `Filters rows so only those matching \`${cond}\` are included.`;
   }
-  if (/\bJOIN\b/i.test(trimmed)) return "Combines rows from another table where a related column matches.";
-  if (/^ORDER BY\b/i.test(trimmed)) return `Sorts the results by ${trimmed.replace(/^ORDER BY\s*/i, "`")}\`.`;
-  if (/^GROUP BY\b/i.test(trimmed)) return `Groups rows that share the same value(s) in \`${trimmed.replace(/^GROUP BY\s*/i, "")}\`.`;
+  if (/\bJOIN\b/i.test(trimmed)) {
+    const joinType = trimmed.match(/^(LEFT|RIGHT|FULL|INNER|CROSS)?\s*(?:OUTER\s+)?JOIN\b/i);
+    const kind = (joinType && joinType[1] || "").toUpperCase();
+    if (kind === "LEFT") return "Combines rows from another table where a related column matches, keeping every row from the left/first table even when there's no match (unmatched columns come back as `NULL`).";
+    if (kind === "RIGHT") return "Combines rows from another table where a related column matches, keeping every row from the right/joined table even when there's no match (unmatched columns come back as `NULL`).";
+    if (kind === "FULL") return "Combines rows from another table where a related column matches, keeping unmatched rows from BOTH tables (unmatched columns come back as `NULL`).";
+    if (kind === "CROSS") return "Combines every row of one table with every row of another (a cross/cartesian join — no matching condition).";
+    return "Combines rows from another table where a related column matches (rows with no match on either side are dropped).";
+  }
+  if (/^HAVING\b/i.test(trimmed)) {
+    const cond = trimmed.replace(/^HAVING\s*/i, "").replace(/;$/, "");
+    return `Filters the grouped results so only groups matching \`${cond}\` are kept (like \`WHERE\`, but applied after \`GROUP BY\`, so it can filter on aggregates like \`COUNT()\`).`;
+  }
+  if (/^ORDER BY\b/i.test(trimmed)) return `Sorts the results by \`${trimmed.replace(/^ORDER BY\s*/i, "").replace(/;$/, "")}\`.`;
+  if (/^GROUP BY\b/i.test(trimmed)) return `Groups rows that share the same value(s) in \`${trimmed.replace(/^GROUP BY\s*/i, "").replace(/;$/, "")}\`.`;
   if (/^INSERT INTO\b/i.test(trimmed)) return "Adds new row(s) into a table.";
   if (/^UPDATE\b/i.test(trimmed)) {
     const table = trimmed.match(/^UPDATE\s+([`"]?\w+[`"]?)/i);
     return table ? `Modifies existing rows in ${symbolTable.describe(table[1].replace(/[`"]/g, ""))}.` : "Modifies existing rows in a table.";
   }
   if (/^DELETE FROM\b/i.test(trimmed)) return "Removes row(s) from a table.";
+  if (trimmed === ")" || trimmed === ");") return "Closes the CTE definition or subquery started above.";
   if (/^CREATE TABLE\b/i.test(trimmed)) {
     const table = trimmed.match(/^CREATE TABLE\s+([`"]?\w+[`"]?)/i);
     return table ? `Creates a new table named \`${table[1].replace(/[`"]/g, "")}\`.` : "Creates a new table.";

@@ -1,4 +1,4 @@
-import { isCommentLine, commentExplanation, findCommonIssues, countUsages, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement, explainTernary, explainClassicForLoop, mdCode } from "../shared/patterns.js";
+import { isCommentLine, commentExplanation, findCommonIssues, countUsages, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement, explainTernary, explainClassicForLoop, mdCode , explainBareFunctionCall , explainLoneOpenBrace } from "../shared/patterns.js";
 
 export const id = "javascript";
 export const label = "JavaScript";
@@ -122,6 +122,9 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   const trimmed = rawLine.trim();
   if (!trimmed) return null;
   if (isCommentLine(trimmed)) return commentExplanation();
+
+  const loneBrace = explainLoneOpenBrace(trimmed);
+  if (loneBrace) return loneBrace;
 
   if (/^import\b/.test(trimmed) || /\brequire\s*\(/.test(trimmed)) {
     return "Imports a library, module, or dependency so functionality from another file/package can be used.";
@@ -319,6 +322,9 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
     }
     return `Sets \`${target}\` to ${mdCode(value)}.`;
   }
+
+  const bareCall = explainBareFunctionCall(trimmed, symbolTable, scope);
+  if (bareCall) return bareCall;
 
   return genericFallbackExplanation();
 }

@@ -1,4 +1,4 @@
-import { isCommentLine, commentExplanation, findCommonIssues, countUsages, genericFallbackExplanation, explainAugmentedAssignment, explainMultipleAssignment, explainComprehension, mdCode } from "../shared/patterns.js";
+import { isCommentLine, commentExplanation, findCommonIssues, countUsages, genericFallbackExplanation, explainAugmentedAssignment, explainMultipleAssignment, explainComprehension, mdCode , explainBareFunctionCall } from "../shared/patterns.js";
 
 export const id = "python";
 export const label = "Python";
@@ -344,6 +344,9 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
       ? `Calls \`.${methodName}(${args.trim()})\` on ${objPhrase}.`
       : `Calls \`.${methodName}()\` on ${objPhrase}.`;
   }
+
+  const bareCall = explainBareFunctionCall(trimmed, symbolTable, scope);
+  if (bareCall) return bareCall;
 
   return genericFallbackExplanation();
 }

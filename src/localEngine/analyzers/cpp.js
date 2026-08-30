@@ -1,4 +1,4 @@
-import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement, explainTernary, explainClassicForLoop } from "../shared/patterns.js";
+import { isCommentLineExcludingHash as isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement, explainTernary, explainClassicForLoop , explainBraceTryCatch, explainBareFunctionCall , explainLoneOpenBrace } from "../shared/patterns.js";
 
 export const id = "cpp";
 export const label = "C++";
@@ -82,11 +82,27 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   if (!trimmed) return null;
   if (isCommentLine(trimmed)) return commentExplanation();
 
+  const loneBrace = explainLoneOpenBrace(trimmed);
+  if (loneBrace) return loneBrace;
+
   const include = trimmed.match(/^#include\s*<(.+)>/);
   if (include) return `Includes the \`${include[1]}\` standard library header.`;
 
   const cls = trimmed.match(/\bclass\s+([A-Za-z_]\w*)/);
   if (cls) return `Defines the class \`${cls[1]}\`, which can serve as a blueprint for creating objects.`;
+
+  // Function/method definition header, e.g. `void run() {` or `int add(int a, int b) {`.
+  // Same shape buildSymbolTable()/analyzeStructure() already match — added
+  // here too so a function's own signature line gets a real explanation
+  // instead of falling through to the generic fallback (previously the
+  // ONLY line type in this analyzer that had structural detection but no
+  // per-line explanation).
+  const fn = trimmed.match(/^(?:static\s+)?[\w:<>]+\s*&?\s*([A-Za-z_]\w*)\s*\(([^)]*)\)\s*\{?$/);
+  if (fn && !/\b(if|for|while|switch|return|catch)\b/.test(trimmed)) {
+    return fn[2].trim()
+      ? `Defines the function \`${fn[1]}\`, which accepts \`${fn[2].trim()}\` as parameter(s).`
+      : `Defines the function \`${fn[1]}\` without parameters.`;
+  }
 
   const forRange = trimmed.match(/^for\s*\(\s*(?:auto|[\w:<>]+)\s*&?\s*([A-Za-z_]\w*)\s*:\s*([A-Za-z_]\w*)\s*\)/);
   if (forRange) {
@@ -109,8 +125,11 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   const ret = trimmed.match(/^return\b\s*(.*?);?$/);
   if (ret) return ret[1].trim() ? `Returns \`${ret[1].trim()}\` from the current function.` : "Returns control from the current function.";
 
-  const cout = trimmed.match(/\bcout\s*<<\s*(.+?)\s*(?:<<\s*endl)?\s*;?$/);
-  if (cout) return `Sends \`${cout[1].trim()}\` to standard output.`;
+  const cout = trimmed.match(/\b(cout|cerr)\s*<<\s*(.+?)\s*(?:<<\s*endl)?\s*;?$/);
+  if (cout) {
+    const stream = cout[1] === "cerr" ? "standard error" : "standard output";
+    return `Sends \`${cout[2].trim()}\` to ${stream}.`;
+  }
 
   const vec = trimmed.match(/(?:std::)?vector\s*<[^>]*>\s*&?\s*([A-Za-z_]\w*)\s*=\s*(.+);/);
   if (vec) return `Creates the vector \`${vec[1]}\` and initializes it with \`${vec[2]}\`.`;
@@ -129,6 +148,12 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
 
   const augmented = explainAugmentedAssignment(trimmed, symbolTable, scope);
   if (augmented) return augmented;
+
+  const tryCatch = explainBraceTryCatch(trimmed);
+  if (tryCatch) return tryCatch;
+
+  const bareCall = explainBareFunctionCall(trimmed, symbolTable, scope);
+  if (bareCall) return bareCall;
 
   return genericFallbackExplanation();
 }

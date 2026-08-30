@@ -1,4 +1,4 @@
-import { findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment } from "../shared/patterns.js";
+import { findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment , explainBareFunctionCall } from "../shared/patterns.js";
 
 export const id = "bash";
 export const label = "Bash";
@@ -19,6 +19,31 @@ export function detect(code) {
 
 function isCommentLine(trimmed) {
   return trimmed.startsWith("#") && !trimmed.startsWith("#!");
+}
+
+// Bash calls a function or external command WITHOUT parentheses
+// (`backup_files`, `notify_admin "done"`) — unlike every other
+// supported language, so the shared explainBareFunctionCall() (which
+// requires `name(...)`) never matches a plain command line. This is
+// the shell-specific equivalent, applied only after every other,
+// more specific line shape above has already had a chance to match.
+const BASH_CONTROL_KEYWORDS = new Set([
+  "if", "then", "else", "elif", "fi", "for", "while", "until", "do",
+  "done", "case", "esac", "function", "return", "exit", "in",
+]);
+
+function explainBareCommand(trimmed, symbolTable, scope) {
+  const match = trimmed.match(/^([A-Za-z_][\w.-]*)(?:\s+(.*))?$/);
+  if (!match) return null;
+
+  const [, name, rest] = match;
+  if (BASH_CONTROL_KEYWORDS.has(name)) return null;
+
+  const info = symbolTable ? symbolTable.get(name, scope) : null;
+  const nameLabel = info && info.role === "function" ? `the \`${name}\` function` : `the \`${name}\` command`;
+
+  const args = (rest || "").trim();
+  return args ? `Runs ${nameLabel}, passing \`${args}\`.` : `Runs ${nameLabel}.`;
 }
 
 function literalRole(value) {
@@ -117,6 +142,12 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
 
   const augmented = explainAugmentedAssignment(trimmed, symbolTable, scope);
   if (augmented) return augmented;
+
+  const bareCall = explainBareFunctionCall(trimmed, symbolTable, scope);
+  if (bareCall) return bareCall;
+
+  const bareCommand = explainBareCommand(trimmed, symbolTable, scope);
+  if (bareCommand) return bareCommand;
 
   return genericFallbackExplanation();
 }

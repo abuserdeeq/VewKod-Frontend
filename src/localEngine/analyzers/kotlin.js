@@ -1,4 +1,4 @@
-import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement } from "../shared/patterns.js";
+import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement , explainBraceTryCatch, explainBareFunctionCall , explainLoneOpenBrace } from "../shared/patterns.js";
 
 export const id = "kotlin";
 export const label = "Kotlin";
@@ -85,6 +85,9 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   if (!trimmed) return null;
   if (isCommentLine(trimmed)) return commentExplanation();
 
+  const loneBrace = explainLoneOpenBrace(trimmed);
+  if (loneBrace) return loneBrace;
+
   if (/^import\s+[\w.]+/.test(trimmed)) return "Imports a class or package so it can be used in this file.";
 
   const cls = trimmed.match(/\b(class|data class)\s+([A-Za-z_]\w*)/);
@@ -135,13 +138,19 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
     return `Declares the ${kind} property \`${decl[2]}\` and assigns it \`${decl[3]}\`.`;
   }
 
-  if (["}"].includes(trimmed)) return "Closes the current code block.";
+  if (["}", "};"].includes(trimmed)) return "Closes the current code block.";
 
   const incDec = explainIncrementDecrement(trimmed);
   if (incDec) return incDec;
 
   const augmented = explainAugmentedAssignment(trimmed, symbolTable, scope);
   if (augmented) return augmented;
+
+  const tryCatch = explainBraceTryCatch(trimmed);
+  if (tryCatch) return tryCatch;
+
+  const bareCall = explainBareFunctionCall(trimmed, symbolTable, scope);
+  if (bareCall) return bareCall;
 
   return genericFallbackExplanation();
 }
