@@ -150,6 +150,14 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
     return "Imports a library or module so functionality from another part of the project (or Python's standard library) can be used.";
   }
 
+  const decorator = trimmed.match(/^@([\w.]+)(?:\((.*)\))?\s*$/);
+  if (decorator) {
+    const [, name, args] = decorator;
+    return args !== undefined
+      ? `Applies the \`@${name}(${args})\` decorator to the function/method defined below, wrapping it with extra behavior.`
+      : `Applies the \`@${name}\` decorator to the function/method defined below, wrapping it with extra behavior.`;
+  }
+
   const fn = trimmed.match(/^def\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/);
   if (fn) {
     const params = fn[2].trim();
@@ -158,8 +166,14 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
       : `Defines the function \`${fn[1]}\` without parameters.`;
   }
 
-  const cls = trimmed.match(/^class\s+([A-Za-z_]\w*)/);
-  if (cls) return `Defines the class \`${cls[1]}\`, which can serve as a blueprint for creating objects.`;
+  const cls = trimmed.match(/^class\s+([A-Za-z_]\w*)(?:\s*\(([^)]*)\))?\s*:/);
+  if (cls) {
+    const [, name, bases] = cls;
+    const baseList = (bases || "").trim();
+    return baseList
+      ? `Defines the class \`${name}\`, which inherits from \`${baseList}\`.`
+      : `Defines the class \`${name}\`, which can serve as a blueprint for creating objects.`;
+  }
 
   const forLoop = trimmed.match(/^for\s+(.+?)\s+in\s+(.+?)\s*:/);
   if (forLoop) {
@@ -277,6 +291,12 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   const augmented = explainAugmentedAssignment(trimmed, symbolTable, scope);
   if (augmented) return augmented;
 
+  const selfAssign = trimmed.match(/^self\.([A-Za-z_]\w*)\s*=\s*(?!=)(.+)$/);
+  if (selfAssign) {
+    const [, attr, value] = selfAssign;
+    return `Sets the instance attribute \`self.${attr}\` to ${mdCode(value.trim())}.`;
+  }
+
   const assign = trimmed.match(/^([A-Za-z_]\w*)\s*=\s*(?!=)(.+)$/);
   if (assign && !/^(if|elif|while|for|return|def|class)\b/.test(trimmed)) {
     const name = assign[1];
@@ -298,6 +318,14 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
     return `Assigns ${mdCode(value)} to the variable \`${name}\`.`;
   }
 
+  const superCall = trimmed.match(/^super\(\)\.([A-Za-z_]\w*)\s*\((.*)\)\s*$/);
+  if (superCall) {
+    const [, methodName, args] = superCall;
+    return args.trim()
+      ? `Calls the parent class's \`${methodName}()\` method via \`super()\`, passing ${mdCode(args.trim())}.`
+      : `Calls the parent class's \`${methodName}()\` method via \`super()\`.`;
+  }
+
   const funcCall = trimmed.match(/^([A-Za-z_]\w*)\s*\((.*)\)\s*$/);
   if (funcCall) {
     const info = symbolTable.get(funcCall[1], scope);
@@ -306,7 +334,6 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
       ? `Calls ${label} with the provided argument(s).`
       : `Calls ${label} without arguments.`;
   }
-
   // obj.method(args) — e.g. list.append(x), dict.update(x)
   const methodCall = trimmed.match(/^([A-Za-z_]\w*)\.([A-Za-z_]\w*)\s*\((.*)\)\s*$/);
   if (methodCall) {

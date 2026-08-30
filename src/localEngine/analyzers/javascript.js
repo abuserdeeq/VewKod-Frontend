@@ -143,8 +143,13 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
       : `Defines the arrow function \`${arrow[1]}\`.`;
   }
 
-  const cls = trimmed.match(/^class\s+([A-Za-z_$][\w$]*)/);
-  if (cls) return `Defines the class \`${cls[1]}\`, which can serve as a blueprint for creating objects.`;
+  const cls = trimmed.match(/^class\s+([A-Za-z_$][\w$]*)(?:\s+extends\s+([A-Za-z_$][\w$.]*))?/);
+  if (cls) {
+    const [, name, base] = cls;
+    return base
+      ? `Defines the class \`${name}\`, which extends \`${base}\` (inherits its properties and methods).`
+      : `Defines the class \`${name}\`, which can serve as a blueprint for creating objects.`;
+  }
 
   const forOf = trimmed.match(/^for\s*\(\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s+of\s+([A-Za-z_$][\w$.]*)\s*\)/);
   if (forOf) {
@@ -245,6 +250,21 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   const augmented = explainAugmentedAssignment(trimmed, symbolTable, scope);
   if (augmented) return augmented;
 
+  const destructure = trimmed.match(/^(?:export\s+)?(const|let|var)\s*(\{[^}]*\}|\[[^\]]*\])\s*=\s*(.+?);?$/);
+  if (destructure) {
+    const [, keyword, pattern, value] = destructure;
+    const isObject = pattern.startsWith("{");
+    const names = pattern
+      .slice(1, -1)
+      .split(",")
+      .map((p) => p.trim().split(":").pop().replace(/\.\.\./, "").trim())
+      .filter(Boolean);
+    const nameList = names.map((n) => `\`${n}\``).join(", ");
+    return isObject
+      ? `Destructures ${mdCode(value)}, pulling out the ${nameList} propert${names.length === 1 ? "y" : "ies"} into new \`${keyword}\` variable(s).`
+      : `Destructures ${mdCode(value)} by position into new \`${keyword}\` variable(s): ${nameList}.`;
+  }
+
   const declared = trimmed.match(/^(?:export\s+)?(const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(.+?);?$/);
   if (declared) {
     const [, keyword, name, value] = declared;
@@ -258,8 +278,32 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
     return `Declares the \`${keyword}\` variable \`${name}\` and assigns it ${mdCode(value)}.`;
   }
 
+  const methodDef = trimmed.match(/^(static\s+|async\s+|get\s+|set\s+)*([A-Za-z_$][\w$]*)\s*\(([^)]*)\)\s*\{$/);
+  if (methodDef) {
+    const [, modifiers, name, params] = methodDef;
+    const paramsTrim = params.trim();
+    const mods = (modifiers || "").trim();
+
+    if (name === "constructor") {
+      return paramsTrim
+        ? `Defines the constructor for this class, which accepts \`${paramsTrim}\` as parameter(s) and runs when a new instance is created.`
+        : "Defines the constructor for this class, which runs when a new instance is created.";
+    }
+
+    const kind = mods.includes("get") ? "getter" : mods.includes("set") ? "setter" : "method";
+    const staticNote = mods.includes("static") ? " (a static method, called on the class itself rather than an instance)" : "";
+    return paramsTrim
+      ? `Defines the \`${name}\` ${kind}${staticNote}, which accepts \`${paramsTrim}\` as parameter(s).`
+      : `Defines the \`${name}\` ${kind}${staticNote}.`;
+  }
+
   const call = trimmed.match(/^([A-Za-z_$][\w$]*)\s*\((.*)\)\s*;?$/);
   if (call) {
+    if (call[1] === "super") {
+      return call[2].trim()
+        ? `Calls the parent class's constructor via \`super()\`, passing ${mdCode(call[2].trim())}.`
+        : "Calls the parent class's constructor via `super()`.";
+    }
     const info = symbolTable.get(call[1], scope);
     const label = info && info.role === "function" ? `the \`${call[1]}()\` function defined above` : `\`${call[1]}()\``;
     return call[2].trim() ? `Calls ${label} with the provided argument(s).` : `Calls ${label} without arguments.`;
