@@ -7,6 +7,57 @@
 // analyzer file.
 // ============================================================
 
+/**
+ * Builds the "Starts a counted loop: ..." explanation from an
+ * already-split init/condition/increment triple. Shared by both
+ * matcher variants below (parenthesized C-style vs. Go's paren-less
+ * form), so the clause-describing logic only lives in one place.
+ */
+function describeForLoopClauses(init, condition, increment) {
+  const initMatch = init.match(/^(?:let|var|const|int|long|double|float)?\s*([A-Za-z_$][\w$]*)\s*(?::=|=)\s*(.+)$/);
+  const initPhrase = initMatch ? `\`${initMatch[1]}\` starts at \`${initMatch[2].trim()}\`` : (init ? `\`${init}\`` : "no initializer");
+
+  let incPhrase;
+  const incDecPost = increment.match(/^([A-Za-z_$][\w$]*)\s*(\+\+|--)$/);
+  const incDecPre = increment.match(/^(\+\+|--)\s*([A-Za-z_$][\w$]*)$/);
+  const incAug = increment.match(/^([A-Za-z_$][\w$]*)\s*(\+=|-=|\*=|\/=)\s*(.+)$/);
+  if (incDecPost || incDecPre) {
+    const name = incDecPost ? incDecPost[1] : incDecPre[2];
+    const op = incDecPost ? incDecPost[2] : incDecPre[1];
+    incPhrase = `${op === "++" ? "increasing" : "decreasing"} \`${name}\` by 1`;
+  } else if (incAug) {
+    const verb = { "+=": "increasing", "-=": "decreasing", "*=": "multiplying", "/=": "dividing" }[incAug[2]] || "updating";
+    incPhrase = `${verb} \`${incAug[1]}\` by \`${incAug[3].trim()}\` each pass`;
+  } else {
+    incPhrase = increment ? `running \`${increment}\` each pass` : "no update step";
+  }
+
+  return `Starts a counted loop: ${initPhrase}, continues while \`${condition}\` is true, ${incPhrase}.`;
+}
+
+/**
+ * Explains a classic C-style `for (init; condition; increment)` loop
+ * header (JS/Java/C/C++/C#/PHP). Returns null if `trimmed` isn't this
+ * shape (e.g. a for-of/for-each/for-in loop, which each language
+ * analyzer already handles separately and more precisely).
+ */
+export function explainClassicForLoop(trimmed) {
+  const header = trimmed.match(/^for\s*\(\s*(.*?)\s*;\s*(.*?)\s*;\s*(.*?)\s*\)\s*\{?$/);
+  if (!header) return null;
+  return describeForLoopClauses(header[1], header[2], header[3]);
+}
+
+/**
+ * Same idea as explainClassicForLoop, but for Go's paren-less
+ * `for init; condition; increment {` form (and its `:=` short
+ * variable declarations).
+ */
+export function explainGoForLoop(trimmed) {
+  const header = trimmed.match(/^for\s+(.*?)\s*;\s*(.*?)\s*;\s*(.*?)\s*\{?$/);
+  if (!header) return null;
+  return describeForLoopClauses(header[1], header[2], header[3]);
+}
+
 const COMMENT_PREFIXES = ["//", "#", "/*", "*", "<!--", "--"];
 
 export function isCommentLine(trimmed) {
