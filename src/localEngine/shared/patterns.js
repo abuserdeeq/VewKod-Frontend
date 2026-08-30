@@ -64,6 +64,21 @@ export function isCommentLine(trimmed) {
   return COMMENT_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
 }
 
+// C, C++, and Rust all use a leading `#` for something that is NOT a
+// comment: C/C++ preprocessor directives (`#include`, `#define`,
+// `#ifdef`, `#pragma`, ...) and Rust attributes (`#[derive(...)]`,
+// `#![allow(...)]`). Those lines have real effects on compilation, so
+// treating them as inert comments (which the shared isCommentLine()
+// above does, since plenty of *other* languages — Python, Bash, Ruby —
+// really do use `#` for comments) produced actively wrong explanations
+// and also silently skipped them during symbol-table/structure
+// building. Those three analyzers import this instead.
+const COMMENT_PREFIXES_NO_HASH = COMMENT_PREFIXES.filter((p) => p !== "#");
+
+export function isCommentLineExcludingHash(trimmed) {
+  return COMMENT_PREFIXES_NO_HASH.some((prefix) => trimmed.startsWith(prefix));
+}
+
 export function commentExplanation() {
   return "This is a comment. It provides information for developers and is not normally executed.";
 }
@@ -97,7 +112,14 @@ export function findCommonIssues(lines) {
       });
     }
 
-    if (/(api[_-]?key|secret|password|token)\s*[:=]\s*["'][^"']+["']/i.test(line)) {
+    // Keyword list intentionally mixes two anchoring styles:
+    // - longer/distinctive words (password, secret, api_key, token,
+    //   credential, access_key, private_key, client_secret) match as a
+    //   substring, same as before, so `userPassword = "..."` still hits.
+    // - short, collision-prone words (pass, pwd, passwd) are wrapped in
+    //   `\b...\b` so `$pass = "..."` is flagged without also matching
+    //   the tail of an unrelated identifier like `compass = "north"`.
+    if (/(api[_-]?key|secret|password|token|credential|access[_-]?key|private[_-]?key|client[_-]?secret|\bpass\b|\bpwd\b|\bpasswd\b)\s*[:=]\s*["'][^"']+["']/i.test(line)) {
       issues.push({
         line: lineNumber,
         type: "security",
@@ -350,6 +372,103 @@ export function mdCode(value) {
   const needsPadding = text.startsWith("`") || text.endsWith("`");
   const body = needsPadding ? ` ${text} ` : text;
   return `${fence}${body}${fence}`;
+}
+
+// Control-flow / declaration keywords that can be immediately followed
+// by `(...)` but are NOT a function call — e.g. `if (x > 0)`,
+// `catch (e: Exception)`, `while (true)`. These are always matched by
+// a more specific rule earlier in each analyzer's explainLine, but are
+// excluded here too as a safety net so explainBareFunctionCall() never
+// double-explains (or misexplains) a control-flow header if it's ever
+// reordered to run first.
+const CALL_STATEMENT_STOPWORDS = new Set([
+  "if", "for", "foreach", "while", "switch", "when", "catch", "try",
+  "finally", "function", "fun", "def", "class", "struct", "enum",
+  "return", "else", "elif", "using", "namespace", "package", "import",
+  "export", "new", "delete", "do", "case", "throw", "raise", "yield",
+  "unsafe", "match", "impl", "trait", "fn",
+]);
+
+/**
+ * Explains a standalone function/method call statement (`greetAll(users);`,
+ * `logger.info(message)`, `foo()`). Every analyzer previously left this
+ * extremely common line shape unexplained — it doesn't match a
+ * declaration, a loop, a conditional, or any of the other specific
+ * shapes each analyzer looks for, so it fell straight through to the
+ * generic "Executes a statement..." fallback regardless of language.
+ *
+ * Deliberately conservative: only matches a single, unnested call with
+ * no operators around it (`x = foo()` and `if (foo())` are handled by
+ * their own, more specific rules, which all run before this one).
+ * Returns null — not a guess — for anything that doesn't fit that
+ * exact shape, so it never overrides a more precise explanation.
+ */
+export function explainBareFunctionCall(trimmed, symbolTable, scope) {
+  const match = trimmed.match(/^([A-Za-z_$][\w$]*(?:[.:]{1,2}[A-Za-z_$][\w$]*)*)\s*\(([^()]*)\)\s*[;.]?$/);
+  if (!match) return null;
+
+  const [, rawName, rawArgs] = match;
+  const shortName = rawName.split(/[.:]+/).pop();
+  if (CALL_STATEMENT_STOPWORDS.has(shortName) || CALL_STATEMENT_STOPWORDS.has(rawName)) return null;
+
+  const info = symbolTable ? (symbolTable.get(rawName, scope) || symbolTable.get(shortName, scope)) : null;
+  const isKnownFn = info && info.role === "function";
+  const nameLabel = isKnownFn ? `the \`${rawName}()\` function` : `\`${rawName}()\``;
+
+  const args = rawArgs.trim();
+  if (!args) return `Calls ${nameLabel} without passing any arguments.`;
+
+  const known = symbolTable ? symbolTable.knownIdentifiersIn(args, scope) : [];
+  const argPhrase = known.length === 1 && args === known[0]
+    ? symbolTable.describe(known[0], scope)
+    : mdCode(args);
+
+  return `Calls ${nameLabel}, passing ${argPhrase}.`;
+}
+
+/**
+ * Explains a brace-delimited `try { } catch (...) { } finally { }`
+ * block header — shared by the languages that use this exact shape
+ * (Java, C#, PHP, Kotlin, C++). JavaScript and Python already have
+ * their own version tailored to their slightly different syntax
+ * (JS is brace-based like this one; Python's is colon/indent-based),
+ * so they don't call this helper.
+ */
+export function explainBraceTryCatch(trimmed) {
+  if (/^try\s*\{?$/.test(trimmed)) {
+    return "Starts a `try` block; if an error/exception occurs anywhere inside it, execution jumps to the matching `catch` block below.";
+  }
+
+  const catchMatch = trimmed.match(/^\}?\s*catch\s*\(([^)]*)\)\s*\{?$/);
+  if (catchMatch) {
+    const inner = catchMatch[1].trim();
+    if (!inner || inner === "...") {
+      return "Catches any exception/error thrown in the `try` block above (a catch-all handler).";
+    }
+    return `Catches an exception/error here (\`${inner}\`) if one was thrown in the \`try\` block above.`;
+  }
+  if (/^\}?\s*catch\s*\{?$/.test(trimmed)) {
+    return "Catches any exception/error thrown in the `try` block above.";
+  }
+
+  if (/^\}?\s*finally\s*\{?$/.test(trimmed)) {
+    return "Starts a `finally` block, which always runs after the `try`/`catch`, whether or not an exception occurred.";
+  }
+
+  return null;
+}
+
+/**
+ * A lone `{` on its own line (Allman/BSD brace style — common in C#,
+ * and a frequent formatting choice in C/C++/Java/Kotlin/Swift too).
+ * It carries real meaning ("a new block starts here") but matched
+ * nothing in any analyzer, so every Allman-style snippet had one
+ * generic-fallback line per block opener. K&R style, where `{` sits
+ * at the end of a function/if/loop header line, is unaffected — this
+ * only fires when the brace is completely alone on its line.
+ */
+export function explainLoneOpenBrace(trimmed) {
+  return trimmed === "{" ? "Opens a new block of code (the matching `}` closes it)." : null;
 }
 
 // ============================================================
