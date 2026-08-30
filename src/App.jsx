@@ -138,6 +138,7 @@ export default function App() {
             onExplain={handleExplain}
             onCancel={handleCancel}
             loading={loading}
+            onWarn={(message) => showToast(message, "info")}
           />
 
           <AnimatePresence>
