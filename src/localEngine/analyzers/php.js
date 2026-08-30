@@ -180,6 +180,20 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
 export function findIssues(lines) {
   const issues = findCommonIssues(lines);
 
+  // Lightweight one-hop taint tracking: a variable assigned directly
+  // from a superglobal (and not sanitized on that same line) is
+  // "tainted" until further notice — this catches the very common
+  // `$name = $_GET['x']; ... echo $name;` split-across-lines pattern
+  // that a same-line-only regex would miss.
+  const taintedVars = new Set();
+  lines.forEach((rawLine) => {
+    const line = rawLine.trim();
+    const taintedAssign = line.match(/^\$(\w+)\s*=\s*\$_(?:GET|POST|REQUEST|COOKIE)\s*\[/);
+    if (taintedAssign && !/\b(htmlspecialchars|intval|\(int\)|filter_var)\s*\(/.test(line)) {
+      taintedVars.add(taintedAssign[1]);
+    }
+  });
+
   lines.forEach((rawLine, index) => {
     const line = rawLine.trim();
     if (/[^=!]==[^=]/.test(line)) {
@@ -189,10 +203,17 @@ export function findIssues(lines) {
       issues.push({ line: index + 1, type: "security", message: "The `mysql_*` extension is removed from modern PHP and was prone to SQL injection. Use PDO or mysqli with prepared statements." });
     }
 
-    // echo/print of a superglobal (or a variable built from one)
-    // straight into the response body without escaping — reflected XSS.
+    // echo/print of a superglobal directly, straight into the
+    // response body without escaping — reflected XSS.
     if (/^(echo|print)\b/.test(line) && /\$_(GET|POST|REQUEST|COOKIE)\b/.test(line) && !/\bhtmlspecialchars\s*\(/.test(line)) {
       issues.push({ line: index + 1, type: "security", message: "Echoes a superglobal (`$_GET`/`$_POST`/etc.) directly without escaping — a reflected XSS risk. Wrap it in `htmlspecialchars()` before output." });
+    } else {
+      // echo/print of a variable that was tainted by a superglobal
+      // assignment earlier in the snippet (and never sanitized).
+      const echoVar = line.match(/^(?:echo|print)\b\s*\$(\w+)\s*;?\s*$/);
+      if (echoVar && taintedVars.has(echoVar[1])) {
+        issues.push({ line: index + 1, type: "security", message: `\`$${echoVar[1]}\` was assigned from a superglobal (\`$_GET\`/\`$_POST\`/etc.) earlier and is echoed here without escaping — a reflected XSS risk. Wrap it in \`htmlspecialchars()\` before output.` });
+      }
     }
 
     // include/require with a variable path — local/remote file inclusion.

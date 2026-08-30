@@ -167,7 +167,7 @@ export function findIssues(lines) {
       issues.push({ line: index + 1, type: "security", message: "`ProcessBuilder` is constructed with a concatenated argument. If any part comes from user input, this is a command-injection risk." });
     }
 
-    if (/\bObjectInputStream\b/.test(line) || /\breadObject\s*\(\s*\)/.test(line)) {
+    if (/\breadObject\s*\(\s*\)/.test(line)) {
       issues.push({ line: index + 1, type: "security", message: "Deserializing with `ObjectInputStream`/`readObject()` on untrusted data can lead to remote code execution. Avoid deserializing data from an untrusted source." });
     }
   });
