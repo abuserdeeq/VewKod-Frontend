@@ -1,4 +1,4 @@
-import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement } from "../shared/patterns.js";
+import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement, explainGoForLoop } from "../shared/patterns.js";
 
 export const id = "go";
 export const label = "Go";
@@ -117,7 +117,7 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
     const phrase = info && info.role === "list" ? `the \`${rangeLoop[3]}\` slice` : `\`${rangeLoop[3]}\``;
     return `Iterates over ${phrase}; on each pass, \`${rangeLoop[2]}\` represents the current item.`;
   }
-  if (/^for\b/.test(trimmed)) return "Starts a loop that repeats a block of code.";
+  if (/^for\b/.test(trimmed)) return explainGoForLoop(trimmed) || "Starts a loop that repeats a block of code.";
 
   const ifMatch = trimmed.match(/^if\s+(.+?)\s*\{?$/);
   if (ifMatch) {

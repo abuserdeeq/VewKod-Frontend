@@ -1,4 +1,4 @@
-import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement, explainTernary } from "../shared/patterns.js";
+import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement, explainTernary, explainClassicForLoop } from "../shared/patterns.js";
 
 export const id = "c";
 export const label = "C";
@@ -84,7 +84,7 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
       : `Defines the function \`${fn[1]}\` without parameters.`;
   }
 
-  if (/^for\s*\(/.test(trimmed)) return "Starts a counted loop that repeats a block of code a set number of times.";
+  if (/^for\s*\(/.test(trimmed)) return explainClassicForLoop(trimmed) || "Starts a counted loop that repeats a block of code a set number of times.";
   if (/^while\s*\(/.test(trimmed)) return "Starts a while loop that keeps running while its condition stays true.";
 
   const ifMatch = trimmed.match(/^if\s*\((.+)\)\s*\{?$/);

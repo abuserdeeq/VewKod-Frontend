@@ -1,4 +1,4 @@
-import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement, explainTernary } from "../shared/patterns.js";
+import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement, explainTernary, explainClassicForLoop } from "../shared/patterns.js";
 
 export const id = "cpp";
 export const label = "C++";
@@ -95,7 +95,7 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
     return `Iterates over ${phrase}; on each pass, \`${forRange[1]}\` represents the current item.`;
   }
 
-  if (/^for\s*\(/.test(trimmed)) return "Starts a counted loop that repeats a block of code a set number of times.";
+  if (/^for\s*\(/.test(trimmed)) return explainClassicForLoop(trimmed) || "Starts a counted loop that repeats a block of code a set number of times.";
   if (/^while\s*\(/.test(trimmed)) return "Starts a while loop that keeps running while its condition stays true.";
 
   const ifMatch = trimmed.match(/^if\s*\((.+)\)\s*\{?$/);

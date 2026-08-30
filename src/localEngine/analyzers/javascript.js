@@ -1,4 +1,4 @@
-import { isCommentLine, commentExplanation, findCommonIssues, countUsages, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement, explainTernary, mdCode } from "../shared/patterns.js";
+import { isCommentLine, commentExplanation, findCommonIssues, countUsages, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement, explainTernary, explainClassicForLoop, mdCode } from "../shared/patterns.js";
 
 export const id = "javascript";
 export const label = "JavaScript";
@@ -163,6 +163,8 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   }
 
   if (/^for\s*\(/.test(trimmed)) {
+    const classicFor = explainClassicForLoop(trimmed);
+    if (classicFor) return classicFor;
     return "Starts a counted loop that repeats a block of code a set number of times.";
   }
   if (/^while\s*\(\s*true\s*\)/.test(trimmed)) {
