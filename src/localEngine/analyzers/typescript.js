@@ -50,7 +50,14 @@ export function analyzeStructure(lines) {
     if (/^(?:export\s+)?interface\s+([A-Za-z_$][\w$]*)/.test(line) || /^(?:export\s+)?type\s+([A-Za-z_$][\w$]*)\s*=/.test(line)) {
       structure.classes.push({ line: index + 1, name: line.split(/\s+/)[line.startsWith("export") ? 2 : 1] });
     }
+
+    // js.analyzeStructure's variable detector requires `name = value`
+    // directly (no `: Type` in between), so typed declarations like
+    // `let count: number = 0;` are silently missed. Catch those here.
+    const typedVar = line.match(/^(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*:\s*[\w<>[\]| ]+?\s*=/);
+    if (typedVar) structure.variables.push({ line: index + 1, name: typedVar[1] });
   });
+  structure.variables.sort((a, b) => a.line - b.line);
   return structure;
 }
 
