@@ -1,4 +1,4 @@
-import { genericFallbackExplanation } from "../shared/patterns.js";
+import { genericFallbackExplanation, findCommonIssues } from "../shared/patterns.js";
 
 export const id = "sql";
 export const label = "SQL";
@@ -91,7 +91,11 @@ export function explainLine(rawLine, symbolTable) {
 }
 
 export function findIssues(lines) {
-  const issues = [];
+  // SQL previously kept its own standalone issue list and never ran
+  // the cross-language checks every other analyzer applies (TODO/FIXME
+  // markers, hard-coded secrets, etc.) — this brings it in line with
+  // the rest so shared rules reach all 14 supported languages, not 13.
+  const issues = findCommonIssues(lines);
 
   lines.forEach((rawLine, index) => {
     const line = rawLine.trim();
