@@ -145,6 +145,13 @@ export function findIssues(lines) {
     if (/\busing\s+namespace\s+std\s*;/.test(line)) {
       issues.push({ line: index + 1, type: "review", message: "`using namespace std;` at file/global scope can cause naming conflicts in larger projects." });
     }
+    if (/\bsprintf\s*\(/.test(line)) {
+      issues.push({ line: index + 1, type: "security", message: "`sprintf()` writes without checking buffer size and can overflow; use `snprintf()` with an explicit size instead." });
+    }
+    const cppSystemCall = line.match(/\bsystem\s*\((.+)\)\s*;?$/);
+    if (cppSystemCall && !/^".*"$/.test(cppSystemCall[1].trim())) {
+      issues.push({ line: index + 1, type: "security", message: "`system()` is called with a non-literal argument. If any part comes from user input, this is a command-injection risk." });
+    }
   });
 
   if (hasNew > hasDelete) {

@@ -154,6 +154,10 @@ export function findIssues(lines) {
     if (/[A-Za-z_]\w*!!/.test(rawLine)) {
       issues.push({ line: index + 1, type: "warning", message: "The `!!` non-null assertion throws if the value is actually `null`. A safe call `?.` is usually safer." });
     }
+    const line = rawLine.trim();
+    if ((/\bRuntime\.getRuntime\s*\(\s*\)\s*\.exec\s*\(/.test(line) || /\bProcessBuilder\s*\(/.test(line)) && /\+/.test(line)) {
+      issues.push({ line: index + 1, type: "security", message: "A process is launched with a concatenated command string. If any part comes from user input, this is a command-injection risk — pass arguments as a list instead." });
+    }
   });
   return issues;
 }

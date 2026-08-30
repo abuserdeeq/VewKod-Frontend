@@ -188,6 +188,27 @@ export function findIssues(lines) {
     if (/\bmysql_query\s*\(/.test(line)) {
       issues.push({ line: index + 1, type: "security", message: "The `mysql_*` extension is removed from modern PHP and was prone to SQL injection. Use PDO or mysqli with prepared statements." });
     }
+
+    // echo/print of a superglobal (or a variable built from one)
+    // straight into the response body without escaping — reflected XSS.
+    if (/^(echo|print)\b/.test(line) && /\$_(GET|POST|REQUEST|COOKIE)\b/.test(line) && !/\bhtmlspecialchars\s*\(/.test(line)) {
+      issues.push({ line: index + 1, type: "security", message: "Echoes a superglobal (`$_GET`/`$_POST`/etc.) directly without escaping — a reflected XSS risk. Wrap it in `htmlspecialchars()` before output." });
+    }
+
+    // include/require with a variable path — local/remote file inclusion.
+    if (/\b(include|include_once|require|require_once)\s+\$/.test(line) || /\b(include|include_once|require|require_once)\s*\(\s*\$/.test(line)) {
+      issues.push({ line: index + 1, type: "security", message: "Includes a file using a variable path. If that value can be influenced by user input, this is a local/remote file inclusion risk." });
+    }
+
+    // system()/exec()/shell_exec()/passthru() with a non-literal argument.
+    const shellCall = line.match(/\b(system|exec|shell_exec|passthru)\s*\((.+)\)\s*;?$/);
+    if (shellCall && !/^["'].*["']$/.test(shellCall[2].trim())) {
+      issues.push({ line: index + 1, type: "security", message: `\`${shellCall[1]}()\` runs its argument as a shell command. If any part of it comes from user input, this is a command-injection risk — validate/escape with \`escapeshellarg()\` at minimum.` });
+    }
+
+    if (/\bunserialize\s*\(/.test(line)) {
+      issues.push({ line: index + 1, type: "security", message: "`unserialize()` on untrusted input can be used to construct arbitrary objects (PHP object injection). Prefer `json_decode()` for data from users." });
+    }
   });
 
   return issues;

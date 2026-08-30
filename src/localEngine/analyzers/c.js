@@ -137,6 +137,13 @@ export function findIssues(lines, symbolTable) {
     if (/\bstrcpy\s*\(/.test(line)) {
       issues.push({ line: index + 1, type: "security", message: "`strcpy()` does not check buffer size and can overflow; consider `strncpy()`." });
     }
+    if (/\bsprintf\s*\(/.test(line)) {
+      issues.push({ line: index + 1, type: "security", message: "`sprintf()` writes without checking buffer size and can overflow; use `snprintf()` with an explicit size instead." });
+    }
+    const cSystemCall = line.match(/\bsystem\s*\((.+)\)\s*;?$/);
+    if (cSystemCall && !/^".*"$/.test(cSystemCall[1].trim())) {
+      issues.push({ line: index + 1, type: "security", message: "`system()` is called with a non-literal argument. If any part comes from user input, this is a command-injection risk." });
+    }
   });
 
   if (mallocLines.length && !hasFree) {

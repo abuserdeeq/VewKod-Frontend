@@ -157,6 +157,19 @@ export function findIssues(lines) {
     if (/\bpublic\s+static\s+void\s+main\b/.test(line) === false && /==\s*"/.test(line)) {
       issues.push({ line: index + 1, type: "review", message: "Compares a `String` using `==`, which checks reference equality, not content. Use `.equals()` instead." });
     }
+
+    // Runtime.exec()/ProcessBuilder built from concatenation — a
+    // command-injection sink if any piece comes from user input.
+    if (/\bRuntime\.getRuntime\s*\(\s*\)\s*\.exec\s*\(/.test(line) && /\+/.test(line)) {
+      issues.push({ line: index + 1, type: "security", message: "`Runtime.exec()` is called with a concatenated string. If any part comes from user input, this is a command-injection risk — pass arguments as a `String[]` instead." });
+    }
+    if (/\bnew\s+ProcessBuilder\s*\(/.test(line) && /\+/.test(line)) {
+      issues.push({ line: index + 1, type: "security", message: "`ProcessBuilder` is constructed with a concatenated argument. If any part comes from user input, this is a command-injection risk." });
+    }
+
+    if (/\bObjectInputStream\b/.test(line) || /\breadObject\s*\(\s*\)/.test(line)) {
+      issues.push({ line: index + 1, type: "security", message: "Deserializing with `ObjectInputStream`/`readObject()` on untrusted data can lead to remote code execution. Avoid deserializing data from an untrusted source." });
+    }
   });
 
   return issues;

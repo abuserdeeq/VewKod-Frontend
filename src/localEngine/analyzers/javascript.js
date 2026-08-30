@@ -267,6 +267,15 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
 
   if (["}", "};", ")", "];"].includes(trimmed)) return "Closes the current code block or structural section.";
 
+  const propAssign = trimmed.match(/^([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\[[^\]]*\]|\([^)]*\))*)\s*=(?!=)\s*(.+?);?$/);
+  if (propAssign) {
+    const [, target, value] = propAssign;
+    if (/\.(innerHTML|outerHTML)$/.test(target)) {
+      return `Replaces the HTML content of the selected element with ${mdCode(value)}. If that value can come from user input, this is an XSS injection risk (see Potential Issues below).`;
+    }
+    return `Sets \`${target}\` to ${mdCode(value)}.`;
+  }
+
   return genericFallbackExplanation();
 }
 
@@ -277,6 +286,26 @@ export function findIssues(lines, symbolTable) {
     const lineNumber = index + 1;
     const line = rawLine.trim();
     if (!line) return;
+
+    // innerHTML/outerHTML assignment where the right-hand side isn't a
+    // fixed string literal — a classic DOM-based XSS pattern, since
+    // whatever value flows in is parsed and executed as HTML/JS.
+    const htmlSink = line.match(/\.(innerHTML|outerHTML)\s*=\s*(.+?);?$/);
+    if (htmlSink && !/^["'`].*["'`]$/.test(htmlSink[2].trim())) {
+      issues.push({
+        line: lineNumber,
+        type: "security",
+        message: `Assigns a non-literal value to \`${htmlSink[1]}\`. If this value can come from user input, it's a DOM-based XSS risk — consider \`textContent\` or a sanitizer instead.`,
+      });
+    }
+
+    if (/\bdocument\.write\s*\(/.test(line)) {
+      issues.push({
+        line: lineNumber,
+        type: "security",
+        message: "`document.write()` injects raw markup into the page and is a common XSS vector. Prefer safer DOM APIs like `textContent` or `createElement`.",
+      });
+    }
 
     if (/[^=!]==[^=]/.test(line)) {
       issues.push({ line: lineNumber, type: "review", message: "Uses `==` for comparison. `===` (strict equality) is usually safer since it avoids implicit type coercion." });

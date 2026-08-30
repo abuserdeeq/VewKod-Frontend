@@ -148,6 +148,12 @@ export function findIssues(lines) {
     if (/\.unwrap\s*\(\s*\)/.test(line)) {
       issues.push({ line: index + 1, type: "warning", message: "`.unwrap()` panics if the value is `None`/`Err`. Consider handling the error case explicitly." });
     }
+    if (/\bCommand::new\s*\(\s*"(sh|bash)"\s*\)/.test(line)) {
+      issues.push({ line: index + 1, type: "security", message: "Invoking a shell via `Command::new(\"sh\")`/`\"bash\"` with a built command string is a command-injection risk if any part comes from user input. Prefer running the target program directly with `.arg()` per argument." });
+    }
+    if (/^\s*unsafe\s*\{/.test(rawLine) || /^\s*unsafe\s+fn\b/.test(line)) {
+      issues.push({ line: index + 1, type: "review", message: "This `unsafe` block/function opts out of Rust's memory-safety guarantees. Double-check the invariants it relies on are actually upheld." });
+    }
   });
 
   return issues;

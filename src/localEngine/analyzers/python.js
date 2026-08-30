@@ -333,6 +333,40 @@ export function findIssues(lines, symbolTable) {
     const line = rawLine.trim();
     if (!line) return;
 
+    // os.system()/os.popen() with a non-literal argument, or
+    // subprocess.* called with shell=True and a non-literal command —
+    // both hand a string straight to the shell, which is a classic
+    // command-injection sink if any part of it comes from user input.
+    const osSystemCall = line.match(/\bos\.(system|popen)\s*\((.+)\)\s*$/);
+    if (osSystemCall && !/^["'].*["']$/.test(osSystemCall[2].trim())) {
+      issues.push({
+        line: lineNumber, type: "security",
+        message: `\`os.${osSystemCall[1]}()\` runs its argument through the shell. If any part of it comes from user input, this is a command-injection risk — prefer \`subprocess.run([...])\` with a list of arguments and no \`shell=True\`.`,
+      });
+    }
+    if (/\bsubprocess\.(run|call|Popen|check_call|check_output)\s*\(/.test(line) && /shell\s*=\s*True/.test(line) && !/subprocess\.\w+\s*\(\s*["']/.test(line)) {
+      issues.push({
+        line: lineNumber, type: "security",
+        message: "`subprocess` called with `shell=True` and a non-literal command runs it through the shell — a command-injection risk if user input reaches it. Prefer passing a list of arguments with `shell=False` (the default).",
+      });
+    }
+
+    // Unsafe deserialization: pickle.load(s) trusts arbitrary bytes to
+    // reconstruct arbitrary objects, and yaml.load() without a safe
+    // Loader can do the same — both can lead to code execution.
+    if (/\bpickle\.loads?\s*\(/.test(line)) {
+      issues.push({
+        line: lineNumber, type: "security",
+        message: "`pickle.load()`/`loads()` can execute arbitrary code while deserializing. Never unpickle data from an untrusted source.",
+      });
+    }
+    if (/\byaml\.load\s*\(/.test(line) && !/Loader\s*=\s*(yaml\.)?SafeLoader/.test(line)) {
+      issues.push({
+        line: lineNumber, type: "security",
+        message: "`yaml.load()` without `Loader=yaml.SafeLoader` can construct arbitrary Python objects from the input. Use `yaml.safe_load()` instead.",
+      });
+    }
+
     if (/^except\s*:\s*$/.test(line)) {
       issues.push({
         line: lineNumber, type: "warning",

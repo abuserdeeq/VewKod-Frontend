@@ -169,6 +169,12 @@ export function findIssues(lines) {
         issues.push({ line: index + 1, type: "warning", message: "An `err` value is assigned here but doesn't appear to be checked with `if err != nil` right after." });
       }
     }
+
+    // exec.Command with a shell invoked via sh -c and a built (not
+    // literal) command string is a command-injection sink.
+    if (/\bexec\.Command\s*\(/.test(line) && /"(sh|bash)"/.test(line) && /(\+|Sprintf)/.test(line)) {
+      issues.push({ line: index + 1, type: "security", message: "`exec.Command` invokes a shell with a built command string. If any part comes from user input, this is a command-injection risk — pass the program and arguments separately instead of going through `sh -c`." });
+    }
   });
 
   return issues;

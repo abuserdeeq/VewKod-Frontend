@@ -148,6 +148,12 @@ export function findIssues(lines) {
     if (/catch\s*\(\s*Exception\s+\w+\s*\)/.test(line)) {
       issues.push({ line: index + 1, type: "warning", message: "Catches the broad `Exception` type. Catching more specific exceptions is usually safer." });
     }
+    if (/\bProcess\.Start\s*\(/.test(line) && /\+/.test(line)) {
+      issues.push({ line: index + 1, type: "security", message: "`Process.Start()` is called with a concatenated argument. If any part comes from user input, this is a command-injection risk." });
+    }
+    if (/\bBinaryFormatter\b/.test(line) || /\.Deserialize\s*\(/.test(line)) {
+      issues.push({ line: index + 1, type: "security", message: "`BinaryFormatter`/`.Deserialize()` on untrusted data can lead to remote code execution. Prefer a data-only format like JSON, and avoid `BinaryFormatter` entirely (it's deprecated for security reasons)." });
+    }
   });
 
   return issues;

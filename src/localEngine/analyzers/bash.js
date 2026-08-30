@@ -129,6 +129,12 @@ export function findIssues(lines) {
     if (/rm\s+-rf\s+\//.test(line)) {
       issues.push({ line: index + 1, type: "security", message: "This deletes files recursively from a root/broad path — double-check the target before running." });
     }
+    if (/\beval\b/.test(line) && /\$/.test(line)) {
+      issues.push({ line: index + 1, type: "security", message: "`eval` re-parses and executes its argument as shell code. If it includes a variable that can be influenced by user/external input, this is a code-injection risk." });
+    }
+    if (/\b(curl|wget)\b.*\|\s*(sudo\s+)?(sh|bash)\b/.test(line)) {
+      issues.push({ line: index + 1, type: "security", message: "Piping a download straight into a shell runs whatever that remote server returns, with no chance to review it first. Download and inspect the script before running it." });
+    }
     if (/\$\w+/.test(line) && !/"\$/.test(line) && /\brm\b|\bcp\b|\bmv\b/.test(line)) {
       issues.push({ line: index + 1, type: "review", message: "An unquoted variable is used with a file-affecting command. Quoting (`\"$var\"`) avoids issues with spaces or globbing." });
     }

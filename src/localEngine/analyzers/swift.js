@@ -146,6 +146,9 @@ export function findIssues(lines) {
     if (/!\s*$/.test(rawLine.trim()) && /^(let|var)\b/.test(rawLine.trim())) {
       issues.push({ line: index + 1, type: "review", message: "Force-unwrapping an optional here will crash if the value is `nil`." });
     }
+    if (/\.arguments\s*=/.test(rawLine) && /\+/.test(rawLine)) {
+      issues.push({ line: index + 1, type: "security", message: "Process/task arguments are built with concatenation. If any part comes from user input, this is a command-injection risk." });
+    }
   });
   return issues;
 }
