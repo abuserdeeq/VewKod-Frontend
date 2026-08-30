@@ -106,6 +106,30 @@ test("PHP: flags unescaped superglobal echo, variable include, system(), and uns
   assert.match(section, /object injection/);
 });
 
+test("PHP: flags echo of a variable tainted by a superglobal on an earlier line", () => {
+  const out = generateLocalExplanation(
+    '<?php\n$name = $_GET["name"];\necho $name;',
+    "php"
+  );
+  assert.match(issuesSection(out), /reflected XSS/);
+});
+
+test("PHP: does not flag a variable sanitized before echo", () => {
+  const out = generateLocalExplanation(
+    '<?php\n$name = htmlspecialchars($_GET["name"]);\necho $name;',
+    "php"
+  );
+  assert.doesNotMatch(issuesSection(out), /reflected XSS/);
+});
+
+test("PHP: does not flag ordinary variables unrelated to superglobals", () => {
+  const out = generateLocalExplanation(
+    '<?php\n$greeting = "hello";\necho $greeting;',
+    "php"
+  );
+  assert.match(issuesSection(out), /No obvious issues were detected/);
+});
+
 test("PHP: does not flag escaped output", () => {
   const out = generateLocalExplanation(
     '<?php\necho htmlspecialchars($_GET["name"]);',
@@ -116,12 +140,21 @@ test("PHP: does not flag escaped output", () => {
 
 test("Java: flags Runtime.exec()/ProcessBuilder concatenation and ObjectInputStream", () => {
   const out = generateLocalExplanation(
-    'class A {\n  void run(String cmd) {\n    Runtime.getRuntime().exec("ls " + cmd);\n    ObjectInputStream ois = new ObjectInputStream(in);\n  }\n}',
+    'class A {\n  void run(String cmd) {\n    Runtime.getRuntime().exec("ls " + cmd);\n    ObjectInputStream ois = new ObjectInputStream(in);\n    Object data = ois.readObject();\n  }\n}',
     "java"
   );
   const section = issuesSection(out);
   assert.match(section, /Runtime\.exec\(\)/);
   assert.match(section, /ObjectInputStream/);
+});
+
+test("Java: does not double-flag a single ObjectInputStream/readObject() pair", () => {
+  const out = generateLocalExplanation(
+    'class A {\n  void run() {\n    ObjectInputStream ois = new ObjectInputStream(in);\n    Object data = ois.readObject();\n  }\n}',
+    "java"
+  );
+  const matches = issuesSection(out).match(/ObjectInputStream/g) || [];
+  assert.equal(matches.length, 1);
 });
 
 test("Go: flags exec.Command with a shell and a built command string", () => {
