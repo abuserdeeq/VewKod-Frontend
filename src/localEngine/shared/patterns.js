@@ -136,6 +136,18 @@ export function findCommonIssues(lines) {
       });
     }
 
+    // Division by a literal zero — a runtime error/crash (or undefined
+    // behavior) in nearly every language, and essentially never
+    // intentional. Guards against false positives on `//` comment
+    // markers and decimals like `0.5`.
+    if (!isCommentLine(line) && /(?<!\/)\/\s*0(?!\.\d)(?![\d.])/.test(line)) {
+      issues.push({
+        line: lineNumber,
+        type: "warning",
+        message: "This divides by a literal `0`, which will crash or produce undefined behavior at runtime. Double-check this value.",
+      });
+    }
+
     // eval() / dynamic code execution — meaningful across JS/PHP/Python/etc.
     if (/\beval\s*\(/.test(line)) {
       issues.push({
@@ -166,6 +178,60 @@ export function findCommonIssues(lines) {
         type: "review",
         message: "Binding to `0.0.0.0` exposes the service on every network interface. Confirm that's intentional before deploying.",
       });
+    }
+
+    // Empty error-handling block: the exception is caught but nothing
+    // is done with it, silently swallowing the failure. Two shapes:
+    // brace-based `catch` (Java/C#/PHP/Kotlin/Swift/C++/JS/TS) and
+    // Python's colon+indent `except`. Each checked both as a single
+    // line (`catch (e) {}` / `except: pass`) and as an open block
+    // whose very next non-blank line immediately closes it.
+    const emptyCatchNow = /catch\s*(?:\([^)]*\))?\s*\{\s*\}/.test(line);
+    const catchOpensBlock = /catch\s*(?:\([^)]*\))?\s*\{\s*$/.test(line);
+    const emptyExceptNow = /^except\b.*:\s*pass\s*$/.test(line);
+    const exceptOpensBlock = /^except\b.*:\s*$/.test(line);
+
+    let emptyHandler = emptyCatchNow || emptyExceptNow;
+    if (!emptyHandler && (catchOpensBlock || exceptOpensBlock)) {
+      const nextLine = lines.slice(index + 1).find((l) => l.trim());
+      const nextTrimmed = nextLine ? nextLine.trim() : "";
+      if (catchOpensBlock && nextTrimmed === "}") emptyHandler = true;
+      if (exceptOpensBlock && nextTrimmed === "pass") emptyHandler = true;
+    }
+    if (emptyHandler) {
+      issues.push({
+        line: lineNumber,
+        type: "review",
+        message: "This error handler is empty — the exception is silently swallowed. Consider at least logging it, even if no other action is needed.",
+      });
+    }
+
+    // Unreachable code after `return`: a statement immediately
+    // following a top-level `return` that sits at the same or deeper
+    // indentation (i.e. still inside the same block, not reached via
+    // a dedent) can never execute. Indentation-based rather than a
+    // real parser, so block-closers (`}`) and alternate-branch labels
+    // (`case`/`else`/`except`/`catch`/...) are excluded to avoid
+    // flagging normal control-flow structure.
+    if (/^return\b/.test(line)) {
+      const indent = rawLine.match(/^\s*/)[0].length;
+      let nextIndex = -1;
+      for (let j = index + 1; j < lines.length; j++) {
+        if (lines[j].trim()) { nextIndex = j; break; }
+      }
+      if (nextIndex !== -1) {
+        const nextTrimmed = lines[nextIndex].trim();
+        const nextIndent = lines[nextIndex].match(/^\s*/)[0].length;
+        const isCloser = /^[}\])]/.test(nextTrimmed);
+        const isBranchLabel = /^(case\b|default\b|else\b|elif\b|except\b|catch\b|finally\b|@)/.test(nextTrimmed);
+        if (nextIndent >= indent && !isCloser && !isBranchLabel) {
+          issues.push({
+            line: nextIndex + 1,
+            type: "warning",
+            message: "This line comes right after a `return` in the same block, so it can never be reached.",
+          });
+        }
+      }
     }
   });
 
