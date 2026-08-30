@@ -1,5 +1,5 @@
 import * as js from "./javascript.js";
-import { isCommentLine, commentExplanation, genericFallbackExplanation } from "../shared/patterns.js";
+import { isCommentLine, commentExplanation, genericFallbackExplanation, explainTernary } from "../shared/patterns.js";
 
 export const id = "typescript";
 export const label = "TypeScript";
@@ -67,7 +67,10 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
 
   const typed = trimmed.match(/^(?:export\s+)?(const|let|var)\s+([A-Za-z_$][\w$]*)\s*:\s*([\w<>\[\]| ]+?)\s*=\s*(.+?);?$/);
   if (typed) {
-    return `Declares the \`${typed[1]}\` variable \`${typed[2]}\` with type \`${typed[3].trim()}\` and assigns it \`${typed[4]}\`.`;
+    const [, keyword, name, tsType, value] = typed;
+    const ternary = explainTernary(name, value);
+    if (ternary) return ternary;
+    return `Declares the \`${keyword}\` variable \`${name}\` with type \`${tsType.trim()}\` and assigns it \`${value}\`.`;
   }
 
   const result = js.explainLine(rawLine, symbolTable, scope);
