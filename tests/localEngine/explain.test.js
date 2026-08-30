@@ -33,6 +33,62 @@ test("Python: list/loop-item symbol tracking + method calls", () => {
   assert.match(lineOf(out, 5), /Calls `\.append\(user\)` on the `active` list/);
 });
 
+test("Python: instance attributes, class inheritance, super() call, and decorators", () => {
+  const code = [
+    "class Animal:",
+    "    def __init__(self, name, sound):",
+    "        self.name = name",
+    "        self.sound = sound",
+    "",
+    "class Dog(Animal):",
+    "    def __init__(self, name):",
+    "        super().__init__(name, \"Woof\")",
+    "",
+    "@lru_cache(maxsize=32)",
+    "def fibonacci(n):",
+    "    return n",
+  ].join("\n");
+
+  const out = generateLocalExplanation(code, "python");
+
+  assert.doesNotMatch(lineOf(out, 1), /inherits/);
+  assert.match(lineOf(out, 3), /instance attribute `self\.name` to `name`/);
+  assert.match(lineOf(out, 6), /class `Dog`, which inherits from `Animal`/);
+  assert.match(lineOf(out, 8), /parent class's `__init__\(\)` method via `super\(\)`, passing `name, "Woof"`/);
+  assert.match(lineOf(out, 10), /Applies the `@lru_cache\(maxsize=32\)` decorator/);
+});
+
+test("JavaScript: constructor, class methods, extends, super() call, and destructuring", () => {
+  const code = [
+    "class Shape {",
+    "  constructor(name) {",
+    "    this.name = name;",
+    "  }",
+    "  describe() {",
+    "    return name;",
+    "  }",
+    "}",
+    "",
+    "class Circle extends Shape {",
+    "  constructor(radius) {",
+    "    super(radius);",
+    "  }",
+    "}",
+    "",
+    "const { a, b } = getPair();",
+    "const [first, ...rest] = getList();",
+  ].join("\n");
+
+  const out = generateLocalExplanation(code, "javascript");
+
+  assert.match(lineOf(out, 2), /Defines the constructor.*accepts `name`/);
+  assert.match(lineOf(out, 5), /Defines the `describe` method/);
+  assert.match(lineOf(out, 10), /class `Circle`, which extends `Shape`/);
+  assert.match(lineOf(out, 12), /parent class's constructor via `super\(\)`, passing `radius`/);
+  assert.match(lineOf(out, 16), /Destructures.*pulling out the `a`, `b` propert/);
+  assert.match(lineOf(out, 17), /Destructures.*by position.*`first`, `rest`/);
+});
+
 test("Go: multi-value short declaration + unchecked err issue", () => {
   const code = [
     "package main",
