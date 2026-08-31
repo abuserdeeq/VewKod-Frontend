@@ -1,32 +1,28 @@
-// Run locally with: node src/localEngine/pilot/pilot-test.mjs
+// Run: node src/localEngine/pilot/pilot-test.mjs
 //
-// Not part of the app or the test suite — a throwaway script to
-// sanity-check the tree-sitter pilot against a few sample snippets,
-// including the exact kind of case (Allman-style-equivalent
-// ambiguity) that the regex-based engine needed a special-cased fix
-// for. Paste whatever this prints back into the chat.
+// Tests every language pilot currently under development. Not part
+// of the app or the test suite — paste whatever this prints back
+// into the chat.
 
 import fs from "node:fs";
 import { analyzePythonAst } from "./pythonTreeSitter.js";
+import { analyzeJavaScriptAst } from "./jsTreeSitter.js";
 
-// Adjust this path if step 2 in the setup notes lands the .wasm file
-// somewhere else.
 const wasmPaths = {
   python: "./node_modules/tree-sitter-wasms/out/tree-sitter-python.wasm",
+  javascript: "./node_modules/tree-sitter-wasms/out/tree-sitter-javascript.wasm",
 };
 
-// If the guessed path above is wrong, this prints what's actually
-// there so the path can be fixed in one round-trip instead of
-// guessing blind.
 const wasmDir = "./node_modules/tree-sitter-wasms/out";
 if (fs.existsSync(wasmDir)) {
-  console.log(`Contents of ${wasmDir}:`, fs.readdirSync(wasmDir).filter((f) => f.includes("python")));
+  console.log(`Contents of ${wasmDir}:`, fs.readdirSync(wasmDir));
 } else {
-  console.log(`${wasmDir} does not exist — check what tree-sitter-wasms actually installed under node_modules/tree-sitter-wasms/`);
+  console.log(`${wasmDir} does not exist.`);
 }
 
+// ---------------- Python ----------------
 
-const samples = {
+const pythonSamples = {
   "unreachable + empty except": `def divide_scores(total, count):
     if count > 0:
         return total / count
@@ -57,15 +53,62 @@ def process(data):
 `,
 };
 
-for (const [label, code] of Object.entries(samples)) {
+console.log("\n\n########## PYTHON ##########");
+for (const [label, code] of Object.entries(pythonSamples)) {
   console.log(`\n===== ${label} =====`);
   try {
     const result = await analyzePythonAst(code, wasmPaths);
     console.log(JSON.stringify(result, null, 2));
   } catch (err) {
-    console.error("ERROR — name:", err && err.name);
     console.error("ERROR — message:", err && err.message);
     console.error("ERROR — stack:", err && err.stack);
-    console.error("ERROR — raw value:", err);
+  }
+}
+
+// ---------------- JavaScript ----------------
+
+const jsSamples = {
+  "unreachable + empty catch": `function calculateFee(amount, count) {
+  if (count > 0) {
+    return amount / count;
+    console.log("This will never run");
+  }
+
+  return amount / 0;
+}
+
+function processOrder(order) {
+  try {
+    return chargeCard(order);
+  } catch (e) {
+  }
+}
+`,
+  "non-empty catch should NOT be flagged": `function processOrder(order) {
+  try {
+    return chargeCard(order);
+  } catch (e) {
+    log(e);
+  }
+}
+`,
+  "if/return should NOT be flagged as unreachable": `function check(x) {
+  if (x > 0) {
+    return x;
+  }
+  return -1;
+}
+`,
+};
+
+console.log("\n\n########## JAVASCRIPT ##########");
+for (const [label, code] of Object.entries(jsSamples)) {
+  console.log(`\n===== ${label} =====`);
+  try {
+    const result = await analyzeJavaScriptAst(code, wasmPaths);
+    console.log(JSON.stringify(result, null, 2));
+  } catch (err) {
+    console.error("ERROR — message:", err && err.message);
+    console.error("ERROR — stack:", err && err.stack);
   }
 }
