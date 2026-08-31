@@ -36,14 +36,32 @@ async function ensureReady(wasmPaths) {
   console.log("[pilot] Parser.init() starting...");
   await Parser.init();
   console.log("[pilot] Parser.init() done.");
-  // IMPORTANT: `Parser.Language` does not exist until AFTER
-  // Parser.init() resolves — the WASM runtime attaches it at that
-  // point. Accessing it any earlier (e.g. destructured at module
-  // load time, before init() ever ran) captures `undefined`
-  // permanently. So it's read fresh, right here, after init().
-  console.log("[pilot] Parser.Language.load() starting, path:", wasmPaths.python);
-  PythonLang = await Parser.Language.load(wasmPaths.python);
-  console.log("[pilot] Parser.Language.load() done.");
+
+  // The nested `Parser.Language` shape assumed here previously turned
+  // out to be undefined at runtime for this install. Rather than guess
+  // again, check every shape the module could plausibly expose the
+  // Language loader under, and report exactly what we find so the next
+  // failure (if any) points at a real cause instead of another guess.
+  console.log("[pilot] Parser own keys:", Object.getOwnPropertyNames(Parser));
+  console.log("[pilot] typeof Parser.Language:", typeof Parser.Language);
+  console.log("[pilot] typeof Parser.prototype?.Language:", typeof Parser.prototype?.Language);
+
+  const LanguageLoader =
+    Parser.Language ||
+    Parser.prototype?.Language ||
+    (typeof Parser.getLanguage === "function" ? Parser : null);
+
+  if (!LanguageLoader || typeof LanguageLoader.load !== "function") {
+    throw new Error(
+      "[pilot] Could not find a working Language.load() on this web-tree-sitter build. " +
+      "Own keys were: " + Object.getOwnPropertyNames(Parser).join(", ") +
+      ". Check node_modules/web-tree-sitter/package.json 'version' and its README for this exact installed version."
+    );
+  }
+
+  console.log("[pilot] Language.load() starting, path:", wasmPaths.python);
+  PythonLang = await LanguageLoader.load(wasmPaths.python);
+  console.log("[pilot] Language.load() done.");
   ready = true;
 }
 
@@ -131,19 +149,16 @@ export async function analyzePythonAst(sourceCode, wasmPaths) {
 //
 // 1. Install the runtime (VERSION PINNED — see note below):
 //      npm install web-tree-sitter@0.22.6 tree-sitter-wasms@0.1.11
-//    Note: web-tree-sitter@0.22.6's default export IS the Parser
-//    class itself. Its `Language` nested class does NOT exist until
-//    AFTER `await Parser.init()` resolves — the WASM runtime attaches
-//    it at that point, so it must be read fresh (`Parser.Language`)
-//    after init(), never destructured/cached beforehand:
-//      import Parser from "web-tree-sitter";
-//      await Parser.init();
-//      const lang = await Parser.Language.load(wasmPath);
-//    (A newer "latest" version used a different shape —
-//    `import { Parser, Language } from "web-tree-sitter"` as two
-//    separate named exports — but that version was incompatible
-//    with tree-sitter-wasms' prebuilt grammars, which is why this
-//    is pinned to 0.22.6 and uses the older shape instead.)
+//    UPDATE: the assumption below (that `Parser.Language` becomes
+//    available as a static property right after `Parser.init()`)
+//    was tested in CI on 2026-08-31 and turned out FALSE for this
+//    install — `Parser.Language` is still undefined after init()
+//    resolves. ensureReady() above now logs every shape it can find
+//    (Parser's own keys, Parser.Language, Parser.prototype.Language)
+//    and throws a clear error listing them if none work. Run the
+//    pilot test again and read those log lines to find the real
+//    shape for this exact installed version before assuming either
+//    shape described below is correct.
 //
 // 2. Get the compiled Python grammar (.wasm). The simplest source is
 //    the community-maintained prebuilt bundle:
