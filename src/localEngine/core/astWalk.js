@@ -16,14 +16,39 @@ function nodeText(node) {
   return node ? node.text : "?";
 }
 
+// C/C++ (and grammars with a similar declarator style) don't expose
+// the function name/params directly on the function_definition node
+// — they sit one or more levels down inside a nested declarator
+// (e.g. `int check(int x)` -> declarator: function_declarator ->
+// declarator: identifier "check", parameters: parameter_list; a
+// pointer return type like `int* check(...)` adds an extra
+// pointer_declarator layer in between). Config opts into this via
+// `declaratorField`: descend through that field, one level at a
+// time, until landing on a node that actually has a `paramsField`
+// child (i.e. the real function_declarator), or give up after a few
+// hops and fall back to the outermost node.
+function resolveDeclaratorNode(node, config) {
+  if (!config.declaratorField) return node;
+  let current = node.childForFieldName(config.declaratorField);
+  let guard = 0;
+  while (current && config.paramsField && !current.childForFieldName(config.paramsField) && guard < 4) {
+    const next = current.childForFieldName(config.declaratorField);
+    if (!next) break;
+    current = next;
+    guard++;
+  }
+  return current || node;
+}
+
 export function extractFunctionsAndClasses(root, config) {
   const functions = [];
   const classes = [];
 
   function walk(node) {
     if (config.functionTypes.includes(node.type)) {
-      const nameNode = config.nameField ? node.childForFieldName(config.nameField) : null;
-      const paramsNode = config.paramsField ? node.childForFieldName(config.paramsField) : null;
+      const target = resolveDeclaratorNode(node, config);
+      const nameNode = config.nameField ? target.childForFieldName(config.nameField) : null;
+      const paramsNode = config.paramsField ? target.childForFieldName(config.paramsField) : null;
       functions.push({
         name: nameNode ? nodeText(nameNode).replace(/^\*/, "") : "?",
         line: node.startPosition.row + 1,

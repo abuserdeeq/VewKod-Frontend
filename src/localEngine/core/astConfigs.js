@@ -77,8 +77,14 @@ export const AST_CONFIGS = {
     catchTypes: [],
     catchBodyField: null,
     emptyBodyStatementTypes: [],
+    // The function name/params aren't directly on function_definition
+    // — they're nested inside its `declarator` field (a
+    // function_declarator, possibly wrapped in a pointer_declarator
+    // for pointer return types). See astWalk.js's
+    // resolveDeclaratorNode() for how this descends to find them.
+    declaratorField: "declarator",
     nameField: "declarator",
-    paramsField: null,
+    paramsField: "parameters",
   },
   cpp: {
     functionTypes: ["function_definition"],
@@ -88,8 +94,9 @@ export const AST_CONFIGS = {
     catchTypes: ["catch_clause"],
     catchBodyField: null,
     emptyBodyStatementTypes: [],
+    declaratorField: "declarator",
     nameField: "declarator",
-    paramsField: null,
+    paramsField: "parameters",
   },
   csharp: {
     functionTypes: ["method_declaration"],
