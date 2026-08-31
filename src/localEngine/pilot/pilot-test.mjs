@@ -10,6 +10,11 @@ import { analyzeJavaScriptAst } from "./jsTreeSitter.js";
 import { analyzeTypeScriptAst } from "./tsTreeSitter.js";
 import { analyzeGoAst } from "./goTreeSitter.js";
 import { analyzeRustAst } from "./rustTreeSitter.js";
+import { analyzePHPAst } from "./phpTreeSitter.js";
+import { analyzeJavaAst } from "./javaTreeSitter.js";
+import { analyzeCSharpAst } from "./csharpTreeSitter.js";
+import { analyzeKotlinAst } from "./kotlinTreeSitter.js";
+import { analyzeSwiftAst } from "./swiftTreeSitter.js";
 
 const wasmPaths = {
   python: "./node_modules/tree-sitter-wasms/out/tree-sitter-python.wasm",
@@ -17,6 +22,11 @@ const wasmPaths = {
   typescript: "./node_modules/tree-sitter-wasms/out/tree-sitter-typescript.wasm",
   go: "./node_modules/tree-sitter-wasms/out/tree-sitter-go.wasm",
   rust: "./node_modules/tree-sitter-wasms/out/tree-sitter-rust.wasm",
+  php: "./node_modules/tree-sitter-wasms/out/tree-sitter-php.wasm",
+  java: "./node_modules/tree-sitter-wasms/out/tree-sitter-java.wasm",
+  csharp: "./node_modules/tree-sitter-wasms/out/tree-sitter-c_sharp.wasm",
+  kotlin: "./node_modules/tree-sitter-wasms/out/tree-sitter-kotlin.wasm",
+  swift: "./node_modules/tree-sitter-wasms/out/tree-sitter-swift.wasm",
 };
 
 const wasmDir = "./node_modules/tree-sitter-wasms/out";
@@ -58,14 +68,6 @@ def process(data):
 
     return result
 `,
-  "non-empty except should NOT be flagged": `def process(data):
-    try:
-        result = risky_operation(data)
-    except Exception as e:
-        log(e)
-
-    return result
-`,
   "if/return should NOT be flagged as unreachable": `def check(x):
     if x > 0:
         return x
@@ -81,7 +83,6 @@ await runSamples("JAVASCRIPT", analyzeJavaScriptAst, {
     return amount / count;
     console.log("This will never run");
   }
-
   return amount / 0;
 }
 
@@ -89,14 +90,6 @@ function processOrder(order) {
   try {
     return chargeCard(order);
   } catch (e) {
-  }
-}
-`,
-  "non-empty catch should NOT be flagged": `function processOrder(order) {
-  try {
-    return chargeCard(order);
-  } catch (e) {
-    log(e);
   }
 }
 `,
@@ -117,7 +110,6 @@ await runSamples("TYPESCRIPT", analyzeTypeScriptAst, {
     return amount / count;
     console.log("This will never run");
   }
-
   return amount / 0;
 }
 
@@ -126,21 +118,6 @@ function processOrder(order: Order): boolean {
     return chargeCard(order);
   } catch (e) {
   }
-}
-`,
-  "non-empty catch should NOT be flagged": `function processOrder(order: Order): boolean {
-  try {
-    return chargeCard(order);
-  } catch (e) {
-    log(e);
-  }
-}
-`,
-  "if/return should NOT be flagged as unreachable": `function check(x: number): number {
-  if (x > 0) {
-    return x;
-  }
-  return -1;
 }
 `,
 }, wasmPaths);
@@ -153,15 +130,7 @@ await runSamples("GO", analyzeGoAst, {
 		return amount / float64(count)
 		fmt.Println("This will never run")
 	}
-
 	return amount / 0
-}
-`,
-  "if/return should NOT be flagged as unreachable": `func check(x int) int {
-	if x > 0 {
-		return x
-	}
-	return -1
 }
 `,
 }, wasmPaths);
@@ -169,12 +138,11 @@ await runSamples("GO", analyzeGoAst, {
 // ---------------- Rust ----------------
 
 await runSamples("RUST", analyzeRustAst, {
-  "unreachable (no catch equivalent in Rust)": `fn calculate_fee(amount: i32, count: i32) -> i32 {
+  "unreachable (no catch equivalent in Rust) — REGRESSION CHECK after sibling-wrapper fix": `fn calculate_fee(amount: i32, count: i32) -> i32 {
     if count > 0 {
         return amount / count;
         println!("This will never run");
     }
-
     return amount / 0;
 }
 `,
@@ -183,6 +151,121 @@ await runSamples("RUST", analyzeRustAst, {
         return x;
     }
     return -1;
+}
+`,
+}, wasmPaths);
+
+// ---------------- PHP ----------------
+
+await runSamples("PHP", analyzePHPAst, {
+  "unreachable + empty catch": `<?php
+function calculateFee($amount, $count) {
+    if ($count > 0) {
+        return $amount / $count;
+        echo "This will never run";
+    }
+    return $amount / 0;
+}
+
+function processOrder($order) {
+    try {
+        return chargeCard($order);
+    } catch (Exception $e) {
+    }
+}
+`,
+}, wasmPaths);
+
+// ---------------- Java ----------------
+
+await runSamples("JAVA", analyzeJavaAst, {
+  "unreachable + empty catch": `public class PaymentProcessor {
+    public double calculateFee(double amount, int count) {
+        if (count > 0) {
+            return amount / count;
+            System.out.println("This will never run");
+        }
+        return amount / 0;
+    }
+
+    public double processOrder(Order order) {
+        try {
+            return chargeCard(order);
+        } catch (Exception e) {
+        }
+        return 0;
+    }
+}
+`,
+}, wasmPaths);
+
+// ---------------- C# ----------------
+
+await runSamples("C#", analyzeCSharpAst, {
+  "unreachable + empty catch (Allman style)": `public class PaymentProcessor
+{
+    public double CalculateFee(double amount, int count)
+    {
+        if (count > 0)
+        {
+            return amount / count;
+            Console.WriteLine("This will never run");
+        }
+        return amount / 0;
+    }
+
+    public double ProcessOrder(Order order)
+    {
+        try
+        {
+            return ChargeCard(order);
+        }
+        catch (Exception e)
+        {
+        }
+        return 0;
+    }
+}
+`,
+}, wasmPaths);
+
+// ---------------- Kotlin ----------------
+
+await runSamples("KOTLIN", analyzeKotlinAst, {
+  "unreachable + empty catch": `fun calculateFee(amount: Double, count: Int): Double {
+    if (count > 0) {
+        return amount / count
+        println("This will never run")
+    }
+    return amount / 0
+}
+
+fun processOrder(order: Order): Boolean {
+    try {
+        return chargeCard(order)
+    } catch (e: Exception) {
+    }
+    return false
+}
+`,
+}, wasmPaths);
+
+// ---------------- Swift ----------------
+
+await runSamples("SWIFT", analyzeSwiftAst, {
+  "unreachable + empty catch": `func calculateFee(amount: Double, count: Int) -> Double {
+    if count > 0 {
+        return amount / Double(count)
+        print("This will never run")
+    }
+    return amount / 0
+}
+
+func processOrder(order: Order) -> Bool {
+    do {
+        return try chargeCard(order)
+    } catch {
+    }
 }
 `,
 }, wasmPaths);

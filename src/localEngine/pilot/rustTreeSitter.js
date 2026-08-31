@@ -45,7 +45,15 @@ export async function analyzeRustAst(sourceCode, wasmPaths) {
     // trailing `;`) when other code follows it. Check both node
     // types to be safe.
     if (node.type === "return_expression" || node.type === "return_statement") {
-      const next = node.nextNamedSibling;
+      // The return_expression itself usually has no next sibling —
+      // it's alone inside its own expression_statement wrapper. The
+      // real "next statement in the block" is a sibling of THAT
+      // wrapper, not of the return_expression itself.
+      let refNode = node;
+      if (refNode.parent && refNode.parent.type === "expression_statement") {
+        refNode = refNode.parent;
+      }
+      const next = refNode.nextNamedSibling;
       if (next && next.type !== "comment") {
         issues.push({
           line: next.startPosition.row + 1,
