@@ -1,0 +1,31 @@
+name: Tree-sitter Pilot Test
+
+# Manually triggered (no push/PR needed) — this exists so the
+# tree-sitter Python pilot (src/localEngine/pilot/) can be tried out
+# entirely on GitHub's servers, from a phone browser, with no local
+# terminal or npm install required. Tap "Run workflow" on this page,
+# wait for it to finish, then open the run and read the "Run pilot
+# test" step's output.
+on:
+  workflow_dispatch:
+
+jobs:
+  pilot-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install pilot-only dependencies
+        # Deliberately separate from `npm ci` / the main install —
+        # these two packages exist only for this experiment and are
+        # not (yet) part of package.json.
+        run: npm install web-tree-sitter tree-sitter-wasms --no-save
+
+      - name: Run pilot test
+        run: node src/localEngine/pilot/pilot-test.mjs
