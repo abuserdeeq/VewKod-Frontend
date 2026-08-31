@@ -22,7 +22,7 @@
 // bug structurally impossible rather than something we had to
 // special-case by hand.
 
-import Parser from "web-tree-sitter";
+import { Parser, Language } from "web-tree-sitter";
 
 let PythonLang = null;
 let ready = false;
@@ -34,7 +34,7 @@ let ready = false;
 async function ensureReady(wasmPaths) {
   if (ready) return;
   await Parser.init();
-  PythonLang = await Parser.Language.load(wasmPaths.python);
+  PythonLang = await Language.load(wasmPaths.python);
   ready = true;
 }
 
@@ -119,6 +119,9 @@ export async function analyzePythonAst(sourceCode, wasmPaths) {
 //
 // 1. Install the runtime:
 //      npm install web-tree-sitter
+//    Note: current versions of web-tree-sitter use NAMED exports
+//    (`import { Parser, Language } from "web-tree-sitter"`), not a
+//    default export. This file has already been updated to match.
 //
 // 2. Get the compiled Python grammar (.wasm). The simplest source is
 //    the community-maintained prebuilt bundle:
