@@ -188,6 +188,7 @@ export function findCommonIssues(lines) {
     // whose very next non-blank line immediately closes it.
     const emptyCatchNow = /catch\s*(?:\([^)]*\))?\s*\{\s*\}/.test(line);
     const catchOpensBlock = /catch\s*(?:\([^)]*\))?\s*\{\s*$/.test(line);
+    const catchHeaderNoBrace = /^\}?\s*catch\s*(?:\([^)]*\))?\s*$/.test(line);
     const emptyExceptNow = /^except\b.*:\s*pass\s*$/.test(line);
     const exceptOpensBlock = /^except\b.*:\s*$/.test(line);
 
@@ -197,6 +198,20 @@ export function findCommonIssues(lines) {
       const nextTrimmed = nextLine ? nextLine.trim() : "";
       if (catchOpensBlock && nextTrimmed === "}") emptyHandler = true;
       if (exceptOpensBlock && nextTrimmed === "pass") emptyHandler = true;
+    }
+    // Allman style: the opening `{` sits on its own line after the
+    // `catch (...)` header (common in C#/Java/C++ formatting), so the
+    // brace never appears on the `catch` line itself — needs its own
+    // two-line lookahead: next non-blank line is a lone `{`, and the
+    // one after that is a lone `}`.
+    if (!emptyHandler && catchHeaderNoBrace) {
+      let idx = index + 1;
+      while (idx < lines.length && !lines[idx].trim()) idx++;
+      if (idx < lines.length && lines[idx].trim() === "{") {
+        let idx2 = idx + 1;
+        while (idx2 < lines.length && !lines[idx2].trim()) idx2++;
+        if (idx2 < lines.length && lines[idx2].trim() === "}") emptyHandler = true;
+      }
     }
     if (emptyHandler) {
       issues.push({
