@@ -26,6 +26,36 @@ test("Flags an empty brace-based catch block (multi-line)", () => {
   assert.match(issuesSection(out), /error handler is empty/);
 });
 
+test("Flags an empty catch block in Allman brace style (opening brace on its own line)", () => {
+  // Regression test: this style — `catch (...)` on one line, the `{`
+  // on the next, `}` closing immediately after — was missed by the
+  // original regex, which only handled the brace sitting on the same
+  // line as `catch`. Common in default C#/Java IDE formatting.
+  const out = generateLocalExplanation(
+    'try\n{\n    risky();\n}\ncatch (Exception e)\n{\n}\n',
+    "csharp"
+  );
+  assert.match(issuesSection(out), /error handler is empty/);
+});
+
+test("Does not flag an Allman-style catch block that actually does something", () => {
+  const out = generateLocalExplanation(
+    'try\n{\n    Risky();\n}\ncatch (Exception e)\n{\n    Log(e);\n}\n',
+    "csharp"
+  );
+  assert.doesNotMatch(issuesSection(out), /error handler is empty/);
+});
+
+test("An Allman-style empty catch still reports alongside the existing broad-exception check", () => {
+  const out = generateLocalExplanation(
+    'try\n{\n    Risky();\n}\ncatch (Exception e)\n{\n}\n',
+    "csharp"
+  );
+  const section = issuesSection(out);
+  assert.match(section, /error handler is empty/);
+  assert.match(section, /Catches the broad `Exception` type/);
+});
+
 test("Flags an empty Python except block (same-line and multi-line)", () => {
   const sameLine = generateLocalExplanation(
     'try:\n    risky()\nexcept Exception:\n    pass\n',
