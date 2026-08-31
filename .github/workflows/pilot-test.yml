@@ -37,5 +37,10 @@ jobs:
         # avoids the mismatch.
         run: npm install web-tree-sitter@0.22.6 tree-sitter-wasms@0.1.11 --no-save
 
+      - name: Inspect web-tree-sitter's actual export shape
+        # Three guesses at how to import this package have failed.
+        # Print the real shape instead of guessing a fourth time.
+        run: node src/localEngine/pilot/inspect-module.mjs
+
       - name: Run pilot test
         run: node src/localEngine/pilot/pilot-test.mjs

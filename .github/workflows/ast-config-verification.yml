@@ -1,0 +1,34 @@
+name: AST Config Verification (all languages)
+
+# Manually triggered — same idea as "Tree-sitter Pilot Test" but
+# covers every language in astConfigs.js instead of just Python, now
+# that the tree-sitter integration has moved from the pilot/ folder
+# into production (src/localEngine/core/). Tap "Run workflow" on this
+# page from a phone browser, no local terminal or npm install needed.
+on:
+  workflow_dispatch:
+
+jobs:
+  verify-ast-configs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        # Real `npm ci` this time (not the pilot's ad hoc --no-save
+        # install) — web-tree-sitter and tree-sitter-wasms are now
+        # real dependencies in package.json, pinned to the versions
+        # confirmed working in the Python pilot run.
+        run: npm ci
+
+      - name: Confirm postinstall copied the .wasm files into public/wasm
+        run: ls -la public/wasm || echo "public/wasm was not created — check scripts/copy-wasm.mjs output above"
+
+      - name: Verify AST configs for every language
+        run: node scripts/verify-ast-configs.mjs
