@@ -33,8 +33,12 @@ let ready = false;
  */
 async function ensureReady(wasmPaths) {
   if (ready) return;
+  console.log("[pilot] Parser.init() starting...");
   await Parser.init();
+  console.log("[pilot] Parser.init() done.");
+  console.log("[pilot] Language.load() starting, path:", wasmPaths.python);
   PythonLang = await Language.load(wasmPaths.python);
+  console.log("[pilot] Language.load() done.");
   ready = true;
 }
 
@@ -52,9 +56,12 @@ async function ensureReady(wasmPaths) {
 export async function analyzePythonAst(sourceCode, wasmPaths) {
   await ensureReady(wasmPaths);
 
+  console.log("[pilot] creating parser + setting language...");
   const parser = new Parser();
   parser.setLanguage(PythonLang);
+  console.log("[pilot] parsing source...");
   const tree = parser.parse(sourceCode);
+  console.log("[pilot] parse done.");
   const root = tree.rootNode;
 
   const functions = [];

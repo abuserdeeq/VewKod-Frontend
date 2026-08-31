@@ -63,6 +63,9 @@ for (const [label, code] of Object.entries(samples)) {
     const result = await analyzePythonAst(code, wasmPaths);
     console.log(JSON.stringify(result, null, 2));
   } catch (err) {
-    console.error("ERROR:", err.message);
+    console.error("ERROR — name:", err && err.name);
+    console.error("ERROR — message:", err && err.message);
+    console.error("ERROR — stack:", err && err.stack);
+    console.error("ERROR — raw value:", err);
   }
 }
