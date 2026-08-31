@@ -1,0 +1,31 @@
+name: Tests
+
+# Runs the full test suite (local-engine analyzers + React component
+# tests) on every push and pull request targeting main, so a
+# regression is caught automatically before it reaches production —
+# instead of relying on someone remembering to run tests by hand
+# before pushing.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run full test suite (local-engine + component tests)
+        run: npm run test:all
