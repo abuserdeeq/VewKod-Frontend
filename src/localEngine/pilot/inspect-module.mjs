@@ -10,30 +10,36 @@ import pkg from "web-tree-sitter";
 console.log("typeof default import:", typeof pkg);
 console.log("default import itself:", pkg);
 
-// Object.keys() only shows ENUMERABLE own properties — static class
-// methods (like `init`, which we already know works) are NOT
-// enumerable, so Object.keys() misses them. getOwnPropertyNames()
-// shows everything, enumerable or not — this is the real list.
+// --- BEFORE Parser.init() ---
+console.log("\n--- BEFORE init() ---");
 console.log("Object.getOwnPropertyNames(pkg):", Object.getOwnPropertyNames(pkg));
-
-// Directly probe the specific names we care about instead of relying
-// on a listing that might hide them.
-console.log("typeof pkg.init:", typeof pkg.init);
 console.log("typeof pkg.Language:", typeof pkg.Language);
-console.log("pkg.Language itself:", pkg.Language);
-console.log("typeof pkg.load:", typeof pkg.load);
-
 if (pkg.prototype) {
   console.log("Instance methods (pkg.prototype):", Object.getOwnPropertyNames(pkg.prototype));
 }
 
-try {
-  const ns = await import("web-tree-sitter");
-  console.log("\nFull namespace object keys:", Object.keys(ns));
-  console.log("ns.default === pkg ?", ns.default === pkg);
-  for (const key of Object.keys(ns)) {
-    console.log(`  typeof ns.${key}:`, typeof ns[key]);
-  }
-} catch (err) {
-  console.error("Namespace import failed:", err.message);
+// --- Call init(), then check again ---
+// Hypothesis: the WASM/Emscripten runtime patches in more of the API
+// (Language, parse, setLanguage, etc.) only after init() finishes —
+// so inspecting before init() may simply be too early to see them.
+console.log("\nCalling pkg.init()...");
+await pkg.init();
+console.log("pkg.init() resolved.");
+
+console.log("\n--- AFTER init() ---");
+console.log("Object.getOwnPropertyNames(pkg):", Object.getOwnPropertyNames(pkg));
+console.log("typeof pkg.Language:", typeof pkg.Language);
+console.log("pkg.Language itself:", pkg.Language);
+if (pkg.Language) {
+  console.log("Object.getOwnPropertyNames(pkg.Language):", Object.getOwnPropertyNames(pkg.Language));
 }
+if (pkg.prototype) {
+  console.log("Instance methods (pkg.prototype):", Object.getOwnPropertyNames(pkg.prototype));
+}
+
+// Also check a live instance, in case the loading method lives there
+// instead of on the class.
+const instance = new pkg();
+console.log("\nInstance own properties:", Object.getOwnPropertyNames(instance));
+console.log("typeof instance.setLanguage:", typeof instance.setLanguage);
+console.log("typeof instance.parse:", typeof instance.parse);
