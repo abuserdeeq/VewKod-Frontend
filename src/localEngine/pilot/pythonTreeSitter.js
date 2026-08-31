@@ -23,7 +23,6 @@
 // special-case by hand.
 
 import Parser from "web-tree-sitter";
-const { Language } = Parser;
 
 let PythonLang = null;
 let ready = false;
@@ -37,9 +36,14 @@ async function ensureReady(wasmPaths) {
   console.log("[pilot] Parser.init() starting...");
   await Parser.init();
   console.log("[pilot] Parser.init() done.");
-  console.log("[pilot] Language.load() starting, path:", wasmPaths.python);
-  PythonLang = await Language.load(wasmPaths.python);
-  console.log("[pilot] Language.load() done.");
+  // IMPORTANT: `Parser.Language` does not exist until AFTER
+  // Parser.init() resolves — the WASM runtime attaches it at that
+  // point. Accessing it any earlier (e.g. destructured at module
+  // load time, before init() ever ran) captures `undefined`
+  // permanently. So it's read fresh, right here, after init().
+  console.log("[pilot] Parser.Language.load() starting, path:", wasmPaths.python);
+  PythonLang = await Parser.Language.load(wasmPaths.python);
+  console.log("[pilot] Parser.Language.load() done.");
   ready = true;
 }
 
@@ -127,12 +131,14 @@ export async function analyzePythonAst(sourceCode, wasmPaths) {
 //
 // 1. Install the runtime (VERSION PINNED — see note below):
 //      npm install web-tree-sitter@0.22.6 tree-sitter-wasms@0.1.11
-//    Note: web-tree-sitter@0.22.6 uses the OLDER API shape — the
-//    default export IS the Parser class itself, and Language is a
-//    static property nested inside it (Parser.Language), not a
-//    separate named export:
+//    Note: web-tree-sitter@0.22.6's default export IS the Parser
+//    class itself. Its `Language` nested class does NOT exist until
+//    AFTER `await Parser.init()` resolves — the WASM runtime attaches
+//    it at that point, so it must be read fresh (`Parser.Language`)
+//    after init(), never destructured/cached beforehand:
 //      import Parser from "web-tree-sitter";
-//      const { Language } = Parser;   // i.e. Parser.Language
+//      await Parser.init();
+//      const lang = await Parser.Language.load(wasmPath);
 //    (A newer "latest" version used a different shape —
 //    `import { Parser, Language } from "web-tree-sitter"` as two
 //    separate named exports — but that version was incompatible
