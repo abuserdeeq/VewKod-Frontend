@@ -22,7 +22,8 @@
 // bug structurally impossible rather than something we had to
 // special-case by hand.
 
-import { Parser, Language } from "web-tree-sitter";
+import pkg from "web-tree-sitter";
+const { Parser, Language } = pkg;
 
 let PythonLang = null;
 let ready = false;
@@ -124,11 +125,18 @@ export async function analyzePythonAst(sourceCode, wasmPaths) {
 // network access in this sandbox)
 // ============================================================
 //
-// 1. Install the runtime:
-//      npm install web-tree-sitter
-//    Note: current versions of web-tree-sitter use NAMED exports
-//    (`import { Parser, Language } from "web-tree-sitter"`), not a
-//    default export. This file has already been updated to match.
+// 1. Install the runtime (VERSION PINNED — see note below):
+//      npm install web-tree-sitter@0.22.6 tree-sitter-wasms@0.1.11
+//    Note: web-tree-sitter@0.22.6 is a CommonJS module without ESM
+//    named-export metadata, so it must be imported as a default
+//    export and destructured — Node's own error message spelled
+//    out the exact fix:
+//      import pkg from "web-tree-sitter";
+//      const { Parser, Language } = pkg;
+//    (A newer "latest" version DID support
+//    `import { Parser, Language } from "web-tree-sitter"` directly —
+//    but that version was incompatible with tree-sitter-wasms'
+//    prebuilt grammars, which is why it's pinned to 0.22.6 here.)
 //
 // 2. Get the compiled Python grammar (.wasm). The simplest source is
 //    the community-maintained prebuilt bundle:
