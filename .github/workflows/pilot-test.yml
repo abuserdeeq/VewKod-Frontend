@@ -25,7 +25,17 @@ jobs:
         # Deliberately separate from `npm ci` / the main install —
         # these two packages exist only for this experiment and are
         # not (yet) part of package.json.
-        run: npm install web-tree-sitter tree-sitter-wasms --no-save
+        #
+        # Versions are PINNED, not "latest". Letting npm grab the
+        # newest web-tree-sitter caused a hard failure
+        # (getDylinkMetadata / failIf inside web-tree-sitter.js) —
+        # the newest core expects grammar .wasm files built in a
+        # newer format (with "dylink" metadata describing module
+        # dependencies) that tree-sitter-wasms' prebuilt
+        # tree-sitter-python.wasm predates. Pinning an older
+        # web-tree-sitter that matches the older-format grammar
+        # avoids the mismatch.
+        run: npm install web-tree-sitter@0.22.6 tree-sitter-wasms@0.1.11 --no-save
 
       - name: Run pilot test
         run: node src/localEngine/pilot/pilot-test.mjs
