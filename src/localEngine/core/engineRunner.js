@@ -166,40 +166,58 @@ function buildRemainderSummary(lines, maxLines, structure) {
   return text;
 }
 
-export function generateLocalExplanation(code, language) {
+export async function generateLocalExplanation(code, language) {
   const detectedLanguage = detectLanguage(code, language);
   const analyzer = getAnalyzer(detectedLanguage);
   const lines = code.split("\n");
+  const maxLines = 40;
 
-  // Function-level scoping: lets two different functions reuse the
-  // same variable name without one clobbering the other's meaning.
-  // Only analyzers that declare `scopeStyle`/`functionStartRegex`
-  // opt in — others fall back to a single flat "global" scope,
-  // identical to the previous (pre-scoping) behavior.
-  const lineScopes = computeLineScopes(lines, analyzer.scopeStyle || "none", analyzer.functionStartRegex || null);
+  let structure, issues, lineByLineSection;
 
-  const symbolTable = createSymbolTable();
-  analyzer.buildSymbolTable(lines, symbolTable, lineScopes);
+  if (typeof analyzer.analyzeAst === "function") {
+    // AST-based analyzer (currently: Python only). One parse
+    // produces structure/issues/line-explanations together — no
+    // separate symbol-table or line-scoping step, since the AST
+    // already knows real scope boundaries with certainty.
+    const result = await analyzer.analyzeAst(code);
+    structure = result.structure;
+    issues = result.issues;
 
-  const structure = analyzer.analyzeStructure(lines, symbolTable);
-  const issues = analyzer.findIssues(lines, symbolTable);
+    lineByLineSection = `## Line-by-Line Explanation\n\n`;
+    result.lineExplanations
+      .filter((entry) => entry.line <= maxLines)
+      .forEach((entry) => {
+        lineByLineSection += `- **Line ${entry.line}:** ${entry.text}\n`;
+      });
+    if (lines.length > maxLines) {
+      lineByLineSection += buildRemainderSummary(lines, maxLines, structure);
+    }
+    lineByLineSection += `\n`;
+  } else {
+    // Regex/indentation-based analyzer — every other language, for
+    // now, until each is ported the same way Python was.
+    const lineScopes = computeLineScopes(lines, analyzer.scopeStyle || "none", analyzer.functionStartRegex || null);
+
+    const symbolTable = createSymbolTable();
+    analyzer.buildSymbolTable(lines, symbolTable, lineScopes);
+
+    structure = analyzer.analyzeStructure(lines, symbolTable);
+    issues = analyzer.findIssues(lines, symbolTable);
+
+    lineByLineSection = `## Line-by-Line Explanation\n\n`;
+    lines.slice(0, maxLines).forEach((line, index) => {
+      const description = analyzer.explainLine(line, symbolTable, lineScopes[index]);
+      if (description) lineByLineSection += `- **Line ${index + 1}:** ${description}\n`;
+    });
+    if (lines.length > maxLines) {
+      lineByLineSection += buildRemainderSummary(lines, maxLines, structure);
+    }
+    lineByLineSection += `\n`;
+  }
 
   let explanation = buildOverview(detectedLanguage, analyzer.label || detectedLanguage, lines, structure);
   explanation += buildStructureBreakdown(structure);
-
-  explanation += `## Line-by-Line Explanation\n\n`;
-  const maxLines = 40;
-
-  lines.slice(0, maxLines).forEach((line, index) => {
-    const description = analyzer.explainLine(line, symbolTable, lineScopes[index]);
-    if (description) explanation += `- **Line ${index + 1}:** ${description}\n`;
-  });
-
-  if (lines.length > maxLines) {
-    explanation += buildRemainderSummary(lines, maxLines, structure);
-  }
-  explanation += `\n`;
-
+  explanation += lineByLineSection;
   explanation += buildKeyConcepts(structure);
   explanation += buildIssuesSection(issues);
 
