@@ -18,6 +18,7 @@
 // instead of the regex-based one.
 
 import Parser from "web-tree-sitter";
+import { findCommonIssues } from "../shared/patterns.js";
 
 export const id = "python";
 export const label = "Python";
@@ -358,7 +359,13 @@ function updateStructure(node, structure) {
     structure.comments.push(lineNumber);
   } else if (node.type === "function_definition") {
     const nameNode = node.childForFieldName("name");
-    structure.functions.push({ line: lineNumber, name: nameNode ? nameNode.text : "?" });
+    const paramsNode = node.childForFieldName("parameters");
+    const parameters = paramsNode ? paramsNode.text.slice(1, -1).trim() : "";
+    structure.functions.push({
+      line: lineNumber,
+      name: nameNode ? nameNode.text : "?",
+      parameters,
+    });
   } else if (node.type === "class_definition") {
     const nameNode = node.childForFieldName("name");
     structure.classes.push({ line: lineNumber, name: nameNode ? nameNode.text : "?" });
@@ -399,7 +406,15 @@ export async function analyzeAst(code) {
     functions: [], classes: [], imports: [], variables: [],
     loops: [], conditionals: [], returns: [], outputs: [], comments: [],
   };
-  const issues = [];
+  // Keep the cross-language safety/review checks that the legacy
+  // regex engine provided for every language. The AST-specific checks
+  // below remain authoritative for Python's structural cases.
+  const lines = code.split("\\n");
+  const sharedIssues = findCommonIssues(lines);
+  const issues = sharedIssues.filter((issue) =>
+    !/error handler is empty/.test(issue.message) &&
+    !/can never be reached/.test(issue.message)
+  );
   const lineExplanations = [];
 
   function walk(node) {
