@@ -185,6 +185,9 @@ function explainNode(node) {
         : "Re-raises the exception currently being handled.";
     }
 
+    case "pass_statement":
+      return "Does nothing intentionally and lets execution continue with the next statement or block exit.";
+
     case "return_statement": {
       const value = node.namedChildren[0];
       return value
@@ -320,20 +323,40 @@ function explainNode(node) {
 
 function checkIssues(node, issues) {
   // `@staticmethod` is intended for methods defined inside a class.
-  // A top-level function decorated with it is usually accidental and
-  // produces a staticmethod descriptor rather than a normal function.
+  // Depending on the Python grammar version, decorators may be exposed
+  // as children of the function definition or as named siblings. Check
+  // both shapes so this review rule remains stable across parser updates.
   if (node.type === "function_definition") {
-    const hasStaticMethodDecorator = node.namedChildren.some(
-      (child) => child.type === "decorator" && /^@staticmethod\s*$/.test(child.text.trim())
-    );
+    const hasStaticMethodDecorator =
+      /(^|\n)\s*@staticmethod\s*(?:#.*)?$/.test(node.text) ||
+      (() => {
+        let sibling = node.previousNamedSibling;
+        while (sibling && sibling.type === "decorator") {
+          if (/^@staticmethod\s*(?:#.*)?$/.test(sibling.text.trim())) return true;
+          sibling = sibling.previousNamedSibling;
+        }
+        return false;
+      })();
+
     if (hasStaticMethodDecorator) {
       let parent = node.parent;
       while (parent && parent.type !== "class_definition" && parent.type !== "module") {
         parent = parent.parent;
       }
       if (!parent || parent.type !== "class_definition") {
+        const inlineDecorator = node.namedChildren.find(
+          (child) => child.type === "decorator" && /^@staticmethod\s*(?:#.*)?$/.test(child.text.trim())
+        );
+        const siblingDecorator = node.previousNamedSibling?.type === "decorator"
+          ? node.previousNamedSibling
+          : null;
+        const decoratorLine = inlineDecorator
+          ? lineOf(inlineDecorator)
+          : siblingDecorator
+            ? lineOf(siblingDecorator)
+            : lineOf(node);
         issues.push({
-          line: lineOf(node),
+          line: decoratorLine,
           type: "review",
           message: "`@staticmethod` is normally used on methods inside a class; this top-level function may be decorated unintentionally.",
         });
@@ -344,10 +367,11 @@ function checkIssues(node, issues) {
   if (node.type === "except_clause") {
     const block = node.namedChildren.find((c) => c.type === "block");
     if (block && block.namedChildCount === 1 && block.namedChild(0).type === "pass_statement") {
+      const passStatement = block.namedChild(0);
       issues.push({
-        line: lineOf(node),
+        line: lineOf(passStatement),
         type: "review",
-        message: "This error handler is empty — the exception is silently swallowed. Consider at least logging it, even if no other action is needed.",
+        message: "This exception handler only contains `pass`, so the exception is silently ignored. Consider logging or handling it appropriately.",
       });
     }
   }
@@ -437,7 +461,18 @@ export async function analyzeAst(code) {
   // regex engine provided for every language. The AST-specific checks
   // below remain authoritative for Python's structural cases.
   const lines = code.split("\n");
-  const sharedIssues = findCommonIssues(lines);
+  const sharedIssues = findCommonIssues(lines).map((issue) => {
+    if (/divides by a literal `0`/.test(issue.message)) {
+      return {
+        ...issue,
+        message: "This divides by the literal `0`, which will raise a `ZeroDivisionError` when this line executes. Double-check this value.",
+      };
+    }
+    return issue;
+  });
+
+  // Python owns the AST-specific versions of these checks, so remove
+  // the legacy regex copies to avoid duplicate findings.
   const issues = sharedIssues.filter((issue) =>
     !/error handler is empty/.test(issue.message) &&
     !/can never be reached/.test(issue.message)
@@ -460,5 +495,15 @@ export async function analyzeAst(code) {
 
   lineExplanations.sort((a, b) => a.line - b.line);
 
-  return { structure, issues, lineExplanations };
+  // Keep the issue list deterministic and prevent two checks from
+  // reporting the exact same finding.
+  const severity = { security: 0, warning: 1, review: 2 };
+  const uniqueIssues = Array.from(
+    new Map(issues.map((issue) => [`${issue.line}|${issue.type}|${issue.message}`, issue])).values()
+  ).sort((a, b) => {
+    const bySeverity = (severity[a.type] ?? 3) - (severity[b.type] ?? 3);
+    return bySeverity || a.line - b.line;
+  });
+
+  return { structure, issues: uniqueIssues, lineExplanations };
 }
