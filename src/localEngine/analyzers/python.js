@@ -1,447 +1,422 @@
-import { isCommentLine, commentExplanation, findCommonIssues, countUsages, genericFallbackExplanation, explainAugmentedAssignment, explainMultipleAssignment, explainComprehension, mdCode , explainBareFunctionCall } from "../shared/patterns.js";
+// ============================================================
+// Python analyzer — Tree-sitter (AST) based
+// ============================================================
+// Replaces the old regex/indentation-based analyzer entirely (no
+// dual maintenance). Consolidates what were three separate pilot
+// files (pythonTreeSitter.js, pythonLineExplainer.js's line
+// explanations, and its structure breakdown) into one module that
+// parses the source ONCE and derives everything from that single
+// tree, instead of walking it three separate times.
+//
+// Unlike every other analyzer in this folder (which are synchronous
+// and called per-line by engineRunner.js), this one is
+// fundamentally async — loading the WASM parser/grammar can't be
+// done synchronously. It exposes a single `analyzeAst(code)` entry
+// point instead of the old buildSymbolTable/analyzeStructure/
+// explainLine/findIssues quartet; engineRunner.js detects AST-based
+// analyzers (by the presence of `analyzeAst`) and calls this path
+// instead of the regex-based one.
+
+import Parser from "web-tree-sitter";
 
 export const id = "python";
 export const label = "Python";
 
-// Function-level scoping (see shared/patterns.js computeLineScopes):
-// Python blocks are indentation-delimited.
-export const scopeStyle = "indent";
-export const functionStartRegex = /^def\s+([A-Za-z_]\w*)/;
+// Where to fetch/read the .wasm files from differs by environment:
+// in a real Node.js process (our test suite runs via `node --test`),
+// web-tree-sitter reads them straight from the filesystem, so a
+// node_modules-relative path is used. In the browser (the actual
+// production app), there is no filesystem — the same files are
+// copied into public/wasm/ at install time (see
+// scripts/copy-wasm.js) and fetched from a root-relative URL
+// instead. `process.versions.node` only exists in a real Node
+// runtime, never in a browser (including inside a Vite bundle), so
+// it's a reliable way to tell the two apart.
+const isNode = typeof process !== "undefined" && !!process.versions?.node;
+
+const WASM_CORE_PATH = isNode
+  ? "./node_modules/web-tree-sitter/tree-sitter.wasm"
+  : "/wasm/tree-sitter.wasm";
+const WASM_PYTHON_PATH = isNode
+  ? "./node_modules/tree-sitter-wasms/out/tree-sitter-python.wasm"
+  : "/wasm/tree-sitter-python.wasm";
 
 export function detect(code) {
-  // Require Python's distinctive `def name(...):` header (colon after
-  // the parameter list) rather than a bare `def`/`print` keyword —
-  // `print(x)` also appears in Swift.
+  // Same detection heuristic as the old regex-based analyzer —
+  // detection itself doesn't need the AST, and must stay fast/sync
+  // since it runs before we know it's Python at all.
   const hasPythonDef = /^\s*def\s+\w+\s*\([^)]*\)\s*:\s*$/m.test(code);
   const hasElif = /\belif\b/.test(code);
   const hasColonBlocks = /:\s*(#.*)?$/m.test(code) && !/[{};]/.test(code);
   return hasPythonDef || hasElif || hasColonBlocks;
 }
 
-// ------------------------------------------------------------
-// Symbol table construction
-// ------------------------------------------------------------
+let PythonLang = null;
+let ready = false;
 
-function literalRole(value) {
-  const v = value.trim();
-  if (/^\[.*\]$/s.test(v)) return "list";
-  if (/^\{.*:.*\}$/s.test(v)) return "dict";
-  if (/^\{.*\}$/s.test(v)) return "set";
-  if (/^["'].*["']$/.test(v)) return "string";
-  if (/^(True|False)$/.test(v)) return "boolean";
-  if (/^-?\d+(\.\d+)?$/.test(v)) return "number";
-  if (/^(list|dict|set)\(\s*\)$/.test(v)) return { list: "list", dict: "dict", set: "set" }[v.match(/^(list|dict|set)/)[1]];
-  return "variable";
+async function ensureReady() {
+  if (ready) return;
+  // locateFile tells the Emscripten-based runtime where to fetch its
+  // own core .wasm from in the browser, since by default it looks
+  // relative to the bundled JS file's own location — which is wrong
+  // once Vite bundles everything. Not needed in Node, where the
+  // default filesystem-relative resolution already works (confirmed
+  // during pilot testing). Untested against a real browser build
+  // yet; if Parser.init() throws there, this is the first thing to
+  // check.
+  await Parser.init(isNode ? undefined : { locateFile: () => WASM_CORE_PATH });
+  PythonLang = await Parser.Language.load(WASM_PYTHON_PATH);
+  ready = true;
 }
 
-export function buildSymbolTable(lines, symbolTable, lineScopes = []) {
-  lines.forEach((rawLine, index) => {
-    const line = rawLine.trim();
-    if (!line || isCommentLine(line)) return;
+function mdCode(text) {
+  return `\`${text}\``;
+}
 
-    const scope = lineScopes[index] || "global";
+function lineOf(node) {
+  return node.startPosition.row + 1;
+}
 
-    // def name(params):
-    const fn = line.match(/^def\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/);
-    if (fn) {
-      // The function's own name is visible in the *enclosing* scope;
-      // its parameters only exist inside the function's own scope.
-      symbolTable.add(fn[1], "function", { parameters: fn[2].trim() }, scope);
-      const fnScope = `${scope}>${fn[1]}#${index}`;
-      fn[2].split(",").map((p) => p.trim().split("=")[0].trim()).filter(Boolean).forEach((p) => {
-        if (p !== "self") symbolTable.add(p, "parameter", {}, fnScope);
+function isRangeCall(node) {
+  return node.type === "call" && node.childForFieldName("function")?.text === "range";
+}
+
+// ------------------------------------------------------------
+// Per-line explanation (mirrors the old explainLine's phrasing)
+// ------------------------------------------------------------
+
+function explainNode(node) {
+  switch (node.type) {
+    case "import_statement":
+    case "import_from_statement":
+      return "Imports a library or module so functionality from another part of the project (or Python's standard library) can be used.";
+
+    case "decorator": {
+      const text = node.text.replace(/^@/, "");
+      return `Applies the \`@${text}\` decorator to the function/method defined below, wrapping it with extra behavior.`;
+    }
+
+    case "function_definition": {
+      const nameNode = node.childForFieldName("name");
+      const paramsNode = node.childForFieldName("parameters");
+      const params = paramsNode ? paramsNode.text.slice(1, -1).trim() : "";
+      const name = nameNode ? nameNode.text : "?";
+      return params
+        ? `Defines the function \`${name}\`, which accepts \`${params}\` as parameter(s).`
+        : `Defines the function \`${name}\` without parameters.`;
+    }
+
+    case "class_definition": {
+      const nameNode = node.childForFieldName("name");
+      const superclasses = node.childForFieldName("superclasses");
+      const bases = superclasses ? superclasses.text.slice(1, -1).trim() : "";
+      const name = nameNode ? nameNode.text : "?";
+      return bases
+        ? `Defines the class \`${name}\`, which inherits from \`${bases}\`.`
+        : `Defines the class \`${name}\`, which can serve as a blueprint for creating objects.`;
+    }
+
+    case "for_statement": {
+      const left = node.childForFieldName("left");
+      const right = node.childForFieldName("right");
+      const targets = left ? left.text : "?";
+      if (right && isRangeCall(right)) {
+        return `Loops through a sequence of numbers produced by ${mdCode(right.text)}, with ${mdCode(targets)} holding the current number on each pass.`;
+      }
+      return `Iterates over ${mdCode(right ? right.text : "?")}; on each pass, ${mdCode(targets)} represents the current item.`;
+    }
+
+    case "while_statement": {
+      const condition = node.childForFieldName("condition");
+      if (condition && condition.text === "True") {
+        return "Starts an intentionally infinite loop, which must be exited with a `break` or `return` elsewhere.";
+      }
+      return "Starts a while loop that keeps running as long as its condition stays true.";
+    }
+
+    case "if_statement": {
+      const condition = node.childForFieldName("condition");
+      return `Checks whether ${mdCode(condition ? condition.text : "?")} is true before running the code that follows.`;
+    }
+
+    case "elif_clause": {
+      const condition = node.childForFieldName("condition");
+      return `Checks another condition (${mdCode(condition ? condition.text : "?")}) before running the code that follows.`;
+    }
+
+    case "else_clause":
+      return "Defines the alternative block that runs when none of the earlier conditions were true.";
+
+    case "try_statement":
+      return "Starts a `try` block; if an error occurs anywhere inside it, control jumps to the matching `except` block below.";
+
+    case "except_clause": {
+      const kids = node.namedChildren;
+      let excType = null;
+      let excName = null;
+      if (kids[0]) {
+        if (kids[0].type === "as_pattern") {
+          const parts = kids[0].namedChildren;
+          excType = parts[0] ? parts[0].text : null;
+          excName = parts[1] ? parts[1].text : null;
+        } else if (kids[0].type !== "block") {
+          excType = kids[0].text;
+        }
+      }
+      if (!excType) return "Catches any exception raised in the `try` block above.";
+      return excName
+        ? `Catches a \`${excType}\` exception raised in the \`try\` block above, made available here as \`${excName}\`.`
+        : `Catches a \`${excType}\` exception raised in the \`try\` block above.`;
+    }
+
+    case "finally_clause":
+      return "Starts a `finally` block, which always runs after the `try`/`except`, whether or not an exception occurred.";
+
+    case "raise_statement": {
+      const value = node.namedChildren[0];
+      return value
+        ? `Raises an exception (${mdCode(value.text)}), stopping normal execution so it can be caught by an enclosing \`try\`/\`except\`.`
+        : "Re-raises the exception currently being handled.";
+    }
+
+    case "return_statement": {
+      const value = node.namedChildren[0];
+      return value
+        ? `Returns ${mdCode(value.text)} from the current function.`
+        : "Returns control from the current function without a value.";
+    }
+
+    case "expression_statement": {
+      const inner = node.namedChildren[0];
+      if (!inner) return null;
+
+      if (inner.type === "call" && inner.childForFieldName("function")?.text === "print") {
+        const argsNode = inner.childForFieldName("arguments");
+        const arg = argsNode ? argsNode.namedChildren[0] : null;
+        if (!arg) return "Prints a blank line as program output.";
+        if (arg.type === "string" && arg.text.match(/^[fF]["']/)) {
+          return `Displays a formatted message, embedding the enclosed expressions into the text.`;
+        }
+        return `Displays ${mdCode(arg.text)} as program output.`;
+      }
+
+      if (inner.type === "call" && inner.childForFieldName("function")?.type === "attribute") {
+        const fn = inner.childForFieldName("function");
+        const obj = fn.childForFieldName("object");
+        const attr = fn.childForFieldName("attribute");
+        const argsNode = inner.childForFieldName("arguments");
+        const args = argsNode ? argsNode.text.slice(1, -1).trim() : "";
+
+        if (obj && obj.type === "call" && obj.childForFieldName("function")?.text === "super") {
+          return args
+            ? `Calls the parent class's \`${attr.text}()\` method via \`super()\`, passing ${mdCode(args)}.`
+            : `Calls the parent class's \`${attr.text}()\` method via \`super()\`.`;
+        }
+
+        return args
+          ? `Calls \`.${attr.text}(${args})\` on ${mdCode(obj.text)}.`
+          : `Calls \`.${attr.text}()\` on ${mdCode(obj.text)}.`;
+      }
+
+      if (inner.type === "call") {
+        const fnName = inner.childForFieldName("function")?.text || "?";
+        const argsNode = inner.childForFieldName("arguments");
+        const hasArgs = argsNode && argsNode.namedChildCount > 0;
+        return hasArgs
+          ? `Calls \`${fnName}()\` with the provided argument(s).`
+          : `Calls \`${fnName}()\` without arguments.`;
+      }
+
+      if (inner.type === "augmented_assignment") {
+        const left = inner.childForFieldName("left");
+        const opNode = inner.child(1);
+        const right = inner.childForFieldName("right");
+        const opVerbs = {
+          "+=": ["Increases", "by"],
+          "-=": ["Decreases", "by"],
+          "*=": ["Multiplies", "by"],
+          "/=": ["Divides", "by"],
+          "//=": ["Floor-divides", "by"],
+          "%=": ["Takes the remainder (modulo) of", "by"],
+          "**=": ["Raises", "to the power of"],
+        };
+        const opText = opNode ? opNode.text : "+=";
+        const [verb, prep] = opVerbs[opText] || ["Updates", "by"];
+        return `${verb} the variable ${mdCode(left ? left.text : "?")} ${prep} ${mdCode(right ? right.text : "?")}.`;
+      }
+
+      if (inner.type === "assignment") {
+        const left = inner.childForFieldName("left");
+        const right = inner.childForFieldName("right");
+
+        if (left && left.type === "pattern_list") {
+          const targets = left.namedChildren.map((t) => t.text);
+          if (right && right.type === "expression_list") {
+            const values = right.namedChildren.map((v) => v.text);
+            if (values.length === targets.length) {
+              if (targets.length === 2 && values[0] === targets[1] && values[1] === targets[0]) {
+                return `Swaps the values of ${mdCode(targets[0])} and ${mdCode(targets[1])} using parallel assignment (both sides are evaluated before either variable is updated).`;
+              }
+              const pairs = targets.map((t, i) => `${mdCode(t)} becomes ${mdCode(values[i])}`).join(", ");
+              return `Assigns several variables at once (parallel assignment): ${pairs}.`;
+            }
+          }
+          return `Unpacks ${mdCode(right ? right.text : "?")} into ${targets.map(mdCode).join(", ")} in a single line.`;
+        }
+
+        if (left && left.type === "attribute") {
+          const objText = left.childForFieldName("object")?.text;
+          const kind = objText === "self" ? "instance attribute" : "attribute";
+          return `Sets the ${kind} ${mdCode(left.text)} to ${mdCode(right ? right.text : "?")}.`;
+        }
+
+        if (right && (right.type === "list_comprehension" || right.type === "set_comprehension" || right.type === "dictionary_comprehension")) {
+          const name = left ? left.text : "?";
+          const forClause = right.namedChildren.find((c) => c.type === "for_in_clause");
+          const ifClause = right.namedChildren.find((c) => c.type === "if_clause");
+          const target = forClause ? forClause.childForFieldName("left")?.text : "?";
+          const iterable = forClause ? forClause.childForFieldName("right")?.text : "?";
+          const condPart = ifClause ? ` (only when ${mdCode(ifClause.namedChildren[0]?.text || "?")} is true)` : "";
+
+          if (right.type === "dictionary_comprehension") {
+            const pair = right.namedChildren.find((c) => c.type === "pair");
+            const key = pair ? pair.childForFieldName("key")?.text : "?";
+            const val = pair ? pair.childForFieldName("value")?.text : "?";
+            return `Creates the dictionary ${mdCode(name)} by mapping ${mdCode(key)} to ${mdCode(val)} for each ${mdCode(target)} in ${mdCode(iterable)}${condPart} — a dict comprehension.`;
+          }
+          const kind = right.type === "list_comprehension" ? "list" : "set";
+          const expr = right.namedChildren[0]?.text || "?";
+          return `Creates the ${kind} ${mdCode(name)} by evaluating ${mdCode(expr)} for each ${mdCode(target)} in ${mdCode(iterable)}${condPart} — a ${kind} comprehension.`;
+        }
+
+        if (right && right.type === "conditional_expression") {
+          const name = left ? left.text : "?";
+          const [whenTrue, condition, whenFalse] = right.namedChildren;
+          if (whenTrue && condition && whenFalse) {
+            return `Assigns ${mdCode(name)} to ${mdCode(whenTrue.text)} if ${mdCode(condition.text)} is true, otherwise ${mdCode(whenFalse.text)} — a conditional (ternary) expression.`;
+          }
+        }
+
+        return `Assigns ${mdCode(right ? right.text : "?")} to the variable ${mdCode(left ? left.text : "?")}.`;
+      }
+
+      return null;
+    }
+
+    default:
+      return null;
+  }
+}
+
+// ------------------------------------------------------------
+// Issue checks (mirrors pythonTreeSitter.js's pilot logic)
+// ------------------------------------------------------------
+
+function checkIssues(node, issues) {
+  if (node.type === "except_clause") {
+    const block = node.namedChildren.find((c) => c.type === "block");
+    if (block && block.namedChildCount === 1 && block.namedChild(0).type === "pass_statement") {
+      issues.push({
+        line: lineOf(node),
+        type: "review",
+        message: "This error handler is empty — the exception is silently swallowed. Consider at least logging it, even if no other action is needed.",
       });
     }
+  }
 
-    // class Name
-    const cls = line.match(/^class\s+([A-Za-z_]\w*)/);
-    if (cls) symbolTable.add(cls[1], "class", {}, scope);
-
-    // for X in Y:   /   for X, Y in Z.items():
-    const forLoop = line.match(/^for\s+(.+?)\s+in\s+(.+?)\s*:/);
-    if (forLoop) {
-      const targets = forLoop[1].split(",").map((t) => t.trim());
-      const sourceExpr = forLoop[2].trim();
-      const sourceName = sourceExpr.split(/[.(]/)[0].trim();
-      const sourceInfo = symbolTable.get(sourceName, scope);
-
-      if (/^range\s*\(/.test(sourceExpr)) {
-        targets.forEach((t) => symbolTable.add(t, "loop-item", { of: "range(...)", ofType: "number sequence" }, scope));
-      } else {
-        const ofType = sourceInfo ? sourceInfo.role : "collection";
-        targets.forEach((t) =>
-          symbolTable.add(t, "loop-item", { of: sourceName, ofType }, scope)
-        );
-      }
+  if (node.type === "return_statement") {
+    const next = node.nextNamedSibling;
+    if (next && next.type !== "comment") {
+      issues.push({
+        line: lineOf(next),
+        type: "warning",
+        message: "This line comes right after a `return` in the same block, so it can never be reached.",
+      });
     }
-
-    // multiple/parallel assignment: a, b = b, a  /  a, b = 1, 2
-    const multiAssign = line.match(/^([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)+)\s*=\s*(?!=)(.+)$/);
-    if (multiAssign) {
-      multiAssign[1].split(",").map((t) => t.trim()).forEach((t) => symbolTable.add(t, "variable", {}, scope));
-    }
-
-    // plain assignment: name = value  (skip comparisons / keywords)
-    const assign = line.match(/^([A-Za-z_]\w*)\s*=\s*(?!=)(.+)$/);
-    if (assign && !/^(if|elif|while|for|return|def|class)\b/.test(line)) {
-      const name = assign[1];
-      const role = literalRole(assign[2]);
-      symbolTable.add(name, role, {}, scope);
-    }
-  });
-
-  return symbolTable;
+  }
 }
 
 // ------------------------------------------------------------
-// Structure overview (counts used in the "Overview" section)
+// Structure (mirrors the old analyzeStructure's categories)
 // ------------------------------------------------------------
 
-export function analyzeStructure(lines) {
-  const result = {
+function addVariableTargets(node, lineNumber, structure) {
+  if (!node) return;
+  if (node.type === "identifier") {
+    structure.variables.push({ line: lineNumber, name: node.text });
+  } else if (node.type === "pattern_list") {
+    for (const child of node.namedChildren) {
+      if (child.type === "identifier") structure.variables.push({ line: lineNumber, name: child.text });
+    }
+  }
+}
+
+function updateStructure(node, structure) {
+  const lineNumber = lineOf(node);
+
+  if (node.type === "comment") {
+    structure.comments.push(lineNumber);
+  } else if (node.type === "function_definition") {
+    const nameNode = node.childForFieldName("name");
+    structure.functions.push({ line: lineNumber, name: nameNode ? nameNode.text : "?" });
+  } else if (node.type === "class_definition") {
+    const nameNode = node.childForFieldName("name");
+    structure.classes.push({ line: lineNumber, name: nameNode ? nameNode.text : "?" });
+  } else if (node.type === "import_statement" || node.type === "import_from_statement") {
+    structure.imports.push(lineNumber);
+  } else if (node.type === "assignment" || node.type === "augmented_assignment") {
+    addVariableTargets(node.childForFieldName("left"), lineNumber, structure);
+  } else if (node.type === "for_statement" || node.type === "while_statement") {
+    structure.loops.push(lineNumber);
+  } else if (node.type === "if_statement" || node.type === "elif_clause" || node.type === "else_clause") {
+    structure.conditionals.push(lineNumber);
+  } else if (node.type === "return_statement") {
+    structure.returns.push(lineNumber);
+  } else if (node.type === "call" && node.childForFieldName("function")?.text === "print") {
+    structure.outputs.push(lineNumber);
+  }
+}
+
+// ------------------------------------------------------------
+// Single entry point — one parse, everything derived from it
+// ------------------------------------------------------------
+
+/**
+ * Parses the source once and returns everything engineRunner.js
+ * needs to build the full explanation: structure (for Overview /
+ * Structure Breakdown / Key Concepts), issues (for Potential
+ * Issues), and lineExplanations (for Line-by-Line Explanation).
+ */
+export async function analyzeAst(code) {
+  await ensureReady();
+
+  const parser = new Parser();
+  parser.setLanguage(PythonLang);
+  const tree = parser.parse(code);
+  const root = tree.rootNode;
+
+  const structure = {
     functions: [], classes: [], imports: [], variables: [],
     loops: [], conditionals: [], returns: [], outputs: [], comments: [],
   };
+  const issues = [];
+  const lineExplanations = [];
 
-  lines.forEach((rawLine, index) => {
-    const lineNumber = index + 1;
-    const line = rawLine.trim();
-    if (!line) return;
+  function walk(node) {
+    updateStructure(node, structure);
+    checkIssues(node, issues);
 
-    if (isCommentLine(line)) result.comments.push(lineNumber);
-
-    const fn = line.match(/^def\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/);
-    if (fn) result.functions.push({ line: lineNumber, name: fn[1], parameters: fn[2] });
-
-    const cls = line.match(/^class\s+([A-Za-z_]\w*)/);
-    if (cls) result.classes.push({ line: lineNumber, name: cls[1] });
-
-    if (/^(import|from)\b/.test(line)) result.imports.push(lineNumber);
-
-    const multiAssign = line.match(/^([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)+)\s*=\s*(?!=)/);
-    if (multiAssign) {
-      multiAssign[1].split(",").map((t) => t.trim()).forEach((name) => result.variables.push({ line: lineNumber, name }));
+    const explanation = explainNode(node);
+    if (explanation) {
+      lineExplanations.push({ line: lineOf(node), text: explanation });
     }
 
-    const assign = line.match(/^([A-Za-z_]\w*)\s*=\s*(?!=)/);
-    if (assign && !/^(if|elif|while|for|def)\b/.test(line)) {
-      result.variables.push({ line: lineNumber, name: assign[1] });
-    }
-
-    if (/^(for|while)\b/.test(line)) result.loops.push(lineNumber);
-    if (/^(if|elif|else)\b/.test(line)) result.conditionals.push(lineNumber);
-    if (/^return\b/.test(line)) result.returns.push(lineNumber);
-    if (/\bprint\s*\(/.test(line)) result.outputs.push(lineNumber);
-  });
-
-  return result;
-}
-
-// ------------------------------------------------------------
-// Line-by-line explanation (symbol-table aware)
-// ------------------------------------------------------------
-
-export function explainLine(rawLine, symbolTable, scope = "global") {
-  const trimmed = rawLine.trim();
-  if (!trimmed) return null;
-  if (isCommentLine(trimmed)) return commentExplanation();
-
-  if (/^(import|from)\b/.test(trimmed)) {
-    return "Imports a library or module so functionality from another part of the project (or Python's standard library) can be used.";
+    for (const child of node.namedChildren) walk(child);
   }
 
-  const decorator = trimmed.match(/^@([\w.]+)(?:\((.*)\))?\s*$/);
-  if (decorator) {
-    const [, name, args] = decorator;
-    return args !== undefined
-      ? `Applies the \`@${name}(${args})\` decorator to the function/method defined below, wrapping it with extra behavior.`
-      : `Applies the \`@${name}\` decorator to the function/method defined below, wrapping it with extra behavior.`;
-  }
+  walk(root);
 
-  const fn = trimmed.match(/^def\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/);
-  if (fn) {
-    const params = fn[2].trim();
-    return params
-      ? `Defines the function \`${fn[1]}\`, which accepts \`${params}\` as parameter(s).`
-      : `Defines the function \`${fn[1]}\` without parameters.`;
-  }
+  lineExplanations.sort((a, b) => a.line - b.line);
 
-  const cls = trimmed.match(/^class\s+([A-Za-z_]\w*)(?:\s*\(([^)]*)\))?\s*:/);
-  if (cls) {
-    const [, name, bases] = cls;
-    const baseList = (bases || "").trim();
-    return baseList
-      ? `Defines the class \`${name}\`, which inherits from \`${baseList}\`.`
-      : `Defines the class \`${name}\`, which can serve as a blueprint for creating objects.`;
-  }
-
-  const forLoop = trimmed.match(/^for\s+(.+?)\s+in\s+(.+?)\s*:/);
-  if (forLoop) {
-    const targets = forLoop[1].split(",").map((t) => t.trim());
-    const sourceExpr = forLoop[2].trim();
-    const sourceName = sourceExpr.split(/[.(]/)[0].trim();
-    const sourceInfo = symbolTable.get(sourceName, scope);
-
-    if (/^range\s*\(/.test(sourceExpr)) {
-      return `Loops through a sequence of numbers produced by \`${sourceExpr}\`, with \`${targets.join(", ")}\` holding the current number on each pass.`;
-    }
-
-    const collectionPhrase = sourceInfo && sourceInfo.role === "list"
-      ? `the \`${sourceName}\` list`
-      : sourceInfo && sourceInfo.role === "dict"
-      ? `the \`${sourceName}\` dictionary`
-      : `\`${sourceName}\``;
-
-    return `Iterates over ${collectionPhrase}; on each pass, \`${targets.join(", ")}\` represents the current item.`;
-  }
-
-  if (/^while\s+True\s*:/.test(trimmed)) {
-    return "Starts an intentionally infinite loop, which must be exited with a `break` or `return` elsewhere.";
-  }
-  if (/^while\s+.+:/.test(trimmed)) {
-    return "Starts a while loop that keeps running as long as its condition stays true.";
-  }
-
-  const ifMatch = trimmed.match(/^if\s+(.+):$/) || trimmed.match(/^elif\s+(.+):$/);
-  if (ifMatch) {
-    const condition = ifMatch[1].trim();
-    const known = symbolTable.knownIdentifiersIn(condition, scope);
-    const prefix = /^elif\b/.test(trimmed) ? "Checks another condition" : "Checks whether";
-    if (known.length === 1 && condition === known[0]) {
-      return `${prefix === "Checks another condition" ? prefix : "Checks whether"} ${symbolTable.describe(known[0], scope)} is truthy before running the code that follows.`;
-    }
-    return `${prefix} ${mdCode(condition)} ${prefix === "Checks another condition" ? "is met" : "is true"} before running the code that follows.`;
-  }
-
-  if (/^else\s*:/.test(trimmed)) {
-    return "Defines the alternative block that runs when none of the earlier conditions were true.";
-  }
-
-  if (/^try\s*:$/.test(trimmed)) {
-    return "Starts a `try` block; if an error occurs anywhere inside it, control jumps to the matching `except` block below.";
-  }
-
-  const exceptMatch = trimmed.match(/^except(?:\s+([\w.]+))?(?:\s+as\s+(\w+))?\s*:$/);
-  if (exceptMatch) {
-    const [, excType, excName] = exceptMatch;
-    if (!excType) return "Catches any exception raised in the `try` block above.";
-    return excName
-      ? `Catches a \`${excType}\` exception raised in the \`try\` block above, made available here as \`${excName}\`.`
-      : `Catches a \`${excType}\` exception raised in the \`try\` block above.`;
-  }
-
-  if (/^finally\s*:$/.test(trimmed)) {
-    return "Starts a `finally` block, which always runs after the `try`/`except`, whether or not an exception occurred.";
-  }
-
-  const raiseMatch = trimmed.match(/^raise\b\s*(.*)$/);
-  if (raiseMatch) {
-    const value = raiseMatch[1].trim();
-    return value
-      ? `Raises an exception (${mdCode(value)}), stopping normal execution so it can be caught by an enclosing \`try\`/\`except\`.`
-      : "Re-raises the exception currently being handled.";
-  }
-
-  const ret = trimmed.match(/^return\b\s*(.*)$/);
-  if (ret) {
-    const value = ret[1].trim();
-    if (!value) return "Returns control from the current function without a value.";
-    const known = symbolTable.knownIdentifiersIn(value, scope);
-    if (known.length === 1 && value === known[0]) {
-      return `Returns ${symbolTable.describe(known[0], scope)} from the current function.`;
-    }
-    return `Returns ${mdCode(value)} from the current function.`;
-  }
-
-  const printMatch = trimmed.match(/^print\s*\((.*)\)$/);
-  if (printMatch) {
-    const arg = printMatch[1].trim();
-
-    const fstring = arg.match(/^f(["'])([\s\S]*)\1$/);
-    if (fstring) {
-      const body = fstring[2];
-      const placeholders = [...body.matchAll(/\{([^{}]+)\}/g)].map((m) => m[1].trim());
-      if (placeholders.length === 0) {
-        return `Displays the text ${mdCode(body)} as program output.`;
-      }
-      const described = placeholders.map((p) => {
-        const knownInner = symbolTable.knownIdentifiersIn(p, scope);
-        return knownInner.length === 1 && p === knownInner[0]
-          ? symbolTable.describe(knownInner[0], scope)
-          : mdCode(p);
-      });
-      const list = described.length === 1
-        ? described[0]
-        : `${described.slice(0, -1).join(", ")} and ${described[described.length - 1]}`;
-      return `Displays a formatted message, embedding ${list} into the text.`;
-    }
-
-    const known = symbolTable.knownIdentifiersIn(arg, scope);
-    if (known.length === 1 && arg === known[0]) {
-      return `Displays ${symbolTable.describe(known[0], scope)} as program output.`;
-    }
-    return arg
-      ? `Displays ${mdCode(arg)} as program output.`
-      : "Prints a blank line as program output.";
-  }
-
-  const multiAssign = explainMultipleAssignment(trimmed);
-  if (multiAssign) return multiAssign;
-
-  const augmented = explainAugmentedAssignment(trimmed, symbolTable, scope);
-  if (augmented) return augmented;
-
-  const selfAssign = trimmed.match(/^self\.([A-Za-z_]\w*)\s*=\s*(?!=)(.+)$/);
-  if (selfAssign) {
-    const [, attr, value] = selfAssign;
-    return `Sets the instance attribute \`self.${attr}\` to ${mdCode(value.trim())}.`;
-  }
-
-  const assign = trimmed.match(/^([A-Za-z_]\w*)\s*=\s*(?!=)(.+)$/);
-  if (assign && !/^(if|elif|while|for|return|def|class)\b/.test(trimmed)) {
-    const name = assign[1];
-    const value = assign[2].trim();
-    const info = symbolTable.get(name, scope);
-
-    const comprehension = explainComprehension(name, value);
-    if (comprehension) return comprehension;
-
-    const ternary = value.match(/^(.+?)\s+if\s+(.+?)\s+else\s+(.+)$/s);
-    if (ternary) {
-      const [, whenTrue, condition, whenFalse] = ternary;
-      return `Assigns \`${name}\` to ${mdCode(whenTrue.trim())} if ${mdCode(condition.trim())} is true, otherwise ${mdCode(whenFalse.trim())} — a conditional (ternary) expression.`;
-    }
-
-    if (info && info.role === "list") return `Creates the list \`${name}\` containing ${mdCode(value)}.`;
-    if (info && info.role === "dict") return `Creates the dictionary \`${name}\` with the key/value pairs ${mdCode(value)}.`;
-    if (info && info.role === "set") return `Creates the set \`${name}\` containing ${mdCode(value)}.`;
-    return `Assigns ${mdCode(value)} to the variable \`${name}\`.`;
-  }
-
-  const superCall = trimmed.match(/^super\(\)\.([A-Za-z_]\w*)\s*\((.*)\)\s*$/);
-  if (superCall) {
-    const [, methodName, args] = superCall;
-    return args.trim()
-      ? `Calls the parent class's \`${methodName}()\` method via \`super()\`, passing ${mdCode(args.trim())}.`
-      : `Calls the parent class's \`${methodName}()\` method via \`super()\`.`;
-  }
-
-  const funcCall = trimmed.match(/^([A-Za-z_]\w*)\s*\((.*)\)\s*$/);
-  if (funcCall) {
-    const info = symbolTable.get(funcCall[1], scope);
-    const label = info && info.role === "function" ? `the \`${funcCall[1]}()\` function defined above` : `\`${funcCall[1]}()\``;
-    return funcCall[2].trim()
-      ? `Calls ${label} with the provided argument(s).`
-      : `Calls ${label} without arguments.`;
-  }
-  // obj.method(args) — e.g. list.append(x), dict.update(x)
-  const methodCall = trimmed.match(/^([A-Za-z_]\w*)\.([A-Za-z_]\w*)\s*\((.*)\)\s*$/);
-  if (methodCall) {
-    const [, objName, methodName, args] = methodCall;
-    const objInfo = symbolTable.get(objName, scope);
-    const objPhrase = objInfo ? symbolTable.describe(objName, scope) : `\`${objName}\``;
-    return args.trim()
-      ? `Calls \`.${methodName}(${args.trim()})\` on ${objPhrase}.`
-      : `Calls \`.${methodName}()\` on ${objPhrase}.`;
-  }
-
-  const bareCall = explainBareFunctionCall(trimmed, symbolTable, scope);
-  if (bareCall) return bareCall;
-
-  return genericFallbackExplanation();
-}
-
-// ------------------------------------------------------------
-// Python-specific issues
-// ------------------------------------------------------------
-
-export function findIssues(lines, symbolTable) {
-  const issues = findCommonIssues(lines);
-
-  lines.forEach((rawLine, index) => {
-    const lineNumber = index + 1;
-    const line = rawLine.trim();
-    if (!line) return;
-
-    // os.system()/os.popen() with a non-literal argument, or
-    // subprocess.* called with shell=True and a non-literal command —
-    // both hand a string straight to the shell, which is a classic
-    // command-injection sink if any part of it comes from user input.
-    const osSystemCall = line.match(/\bos\.(system|popen)\s*\((.+)\)\s*$/);
-    if (osSystemCall && !/^["'].*["']$/.test(osSystemCall[2].trim())) {
-      issues.push({
-        line: lineNumber, type: "security",
-        message: `\`os.${osSystemCall[1]}()\` runs its argument through the shell. If any part of it comes from user input, this is a command-injection risk — prefer \`subprocess.run([...])\` with a list of arguments and no \`shell=True\`.`,
-      });
-    }
-    if (/\bsubprocess\.(run|call|Popen|check_call|check_output)\s*\(/.test(line) && /shell\s*=\s*True/.test(line) && !/subprocess\.\w+\s*\(\s*["']/.test(line)) {
-      issues.push({
-        line: lineNumber, type: "security",
-        message: "`subprocess` called with `shell=True` and a non-literal command runs it through the shell — a command-injection risk if user input reaches it. Prefer passing a list of arguments with `shell=False` (the default).",
-      });
-    }
-
-    // Unsafe deserialization: pickle.load(s) trusts arbitrary bytes to
-    // reconstruct arbitrary objects, and yaml.load() without a safe
-    // Loader can do the same — both can lead to code execution.
-    if (/\bpickle\.loads?\s*\(/.test(line)) {
-      issues.push({
-        line: lineNumber, type: "security",
-        message: "`pickle.load()`/`loads()` can execute arbitrary code while deserializing. Never unpickle data from an untrusted source.",
-      });
-    }
-    if (/\byaml\.load\s*\(/.test(line) && !/Loader\s*=\s*(yaml\.)?SafeLoader/.test(line)) {
-      issues.push({
-        line: lineNumber, type: "security",
-        message: "`yaml.load()` without `Loader=yaml.SafeLoader` can construct arbitrary Python objects from the input. Use `yaml.safe_load()` instead.",
-      });
-    }
-
-    if (/^except\s*:\s*$/.test(line)) {
-      issues.push({
-        line: lineNumber, type: "warning",
-        message: "This catches every exception without specifying a type. A more specific `except SomeError:` is usually safer.",
-      });
-    }
-
-    if (/==\s*None\b/.test(line) || /\bNone\s*==/.test(line)) {
-      issues.push({
-        line: lineNumber, type: "review",
-        message: "Comparing to `None` with `==` works, but `is None` is the more idiomatic and reliable Python style.",
-      });
-    }
-
-    const mutableDefault = line.match(/^def\s+\w+\s*\([^)]*=\s*(\[\]|\{\})[^)]*\)/);
-    if (mutableDefault) {
-      issues.push({
-        line: lineNumber, type: "warning",
-        message: "Using a mutable default argument (`[]` or `{}`) can cause values to unexpectedly persist between function calls.",
-      });
-    }
-
-    const emptyFn = /^def\s+\w+\s*\([^)]*\)\s*:\s*$/.test(line);
-    if (emptyFn) {
-      const currentIndent = rawLine.match(/^\s*/)[0].length;
-      const next = lines.slice(index + 1).find((l) => l.trim());
-      const nextIndent = next ? next.match(/^\s*/)[0].length : 0;
-      if (!next || nextIndent <= currentIndent) {
-        issues.push({ line: lineNumber, type: "warning", message: "This function appears to have no implementation yet." });
-      }
-    }
-  });
-
-  symbolTable.symbols.forEach((info) => {
-    // Functions/classes are commonly defined without being called within
-    // the same standalone snippet — flagging that as "unused" produces a
-    // false positive on almost every single-function snippet, so only
-    // variables are checked here.
-    if (["parameter", "loop-item", "function", "class"].includes(info.role)) return;
-    const name = info.name;
-    if (countUsages(lines, name) <= 1) {
-      const defLine = lines.findIndex((l) => new RegExp(`\\b${name}\\b`).test(l));
-      issues.push({ line: defLine + 1, type: "review", message: `Variable \`${name}\` appears to be assigned but may not be used later.` });
-    }
-  });
-
-  return issues;
+  return { structure, issues, lineExplanations };
 }
