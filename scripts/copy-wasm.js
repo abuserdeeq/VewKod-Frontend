@@ -1,1 +1,38 @@
+// Copies the .wasm files the Tree-sitter-based Python local-engine
+// analyzer needs at runtime from node_modules into public/wasm/, so
+// Vite serves them as static assets (reachable at /wasm/... in the
+// browser). Runs automatically as a postinstall step — no manual
+// copying needed after `npm install`.
+//
+// If either source file is missing (e.g. a package's internal
+// folder structure changed), this warns instead of crashing the
+// install — the app still builds, but the Python local-engine
+// fallback would fail at runtime until the path is fixed. Report
+// any "[copy-wasm] Skipping missing file" warning back so the path
+// can be corrected.
 
+import fs from "node:fs";
+
+const copies = [
+  {
+    from: "node_modules/web-tree-sitter/tree-sitter.wasm",
+    to: "public/wasm/tree-sitter.wasm",
+    note: "web-tree-sitter core runtime",
+  },
+  {
+    from: "node_modules/tree-sitter-wasms/out/tree-sitter-python.wasm",
+    to: "public/wasm/tree-sitter-python.wasm",
+    note: "Python grammar",
+  },
+];
+
+fs.mkdirSync("public/wasm", { recursive: true });
+
+for (const { from, to, note } of copies) {
+  if (!fs.existsSync(from)) {
+    console.warn(`[copy-wasm] Skipping missing file (${note}): ${from}`);
+    continue;
+  }
+  fs.copyFileSync(from, to);
+  console.log(`[copy-wasm] Copied ${note}: ${from} -> ${to}`);
+}
