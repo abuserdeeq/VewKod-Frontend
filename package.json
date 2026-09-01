@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "postinstall": "node scripts/copy-wasm.js",
     "test": "node --test tests/localEngine/*.test.js",
     "test:ui": "vitest run",
     "test:ui:watch": "vitest",
@@ -23,7 +24,9 @@
     "react-markdown": "^9.0.1",
     "react-simple-code-editor": "^0.14.1",
     "react-syntax-highlighter": "^15.6.1",
-    "tailwindcss": "^4.3.3"
+    "tailwindcss": "^4.3.3",
+    "web-tree-sitter": "0.22.6",
+    "tree-sitter-wasms": "0.1.11"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",

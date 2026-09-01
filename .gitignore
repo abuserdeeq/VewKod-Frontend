@@ -2,3 +2,6 @@ node_modules
 .env
 .env.local
 dist
+# Copied from node_modules at install time by scripts/copy-wasm.js —
+# not committed since they're regenerated on every install/build.
+public/wasm/
