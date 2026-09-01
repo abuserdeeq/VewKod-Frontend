@@ -215,3 +215,31 @@ test("Python AST analyzer keeps shared TODO/FIXME and eval checks", async () => 
   assert.match(section, /TODO\/FIXME marker/);
   assert.match(section, /`eval\(\)` executes arbitrary code/);
 });
+
+
+// ============================================================
+// Python explanation quality
+// ============================================================
+
+test("Python explanation shows all lines for a medium-sized snippet", async () => {
+  const code = Array.from({ length: 50 }, (_, i) => `value_${i} = ${i}`).join("\n");
+  const out = await generateLocalExplanation(code, "python");
+  assert.doesNotMatch(out, /more lines not shown individually/);
+  assert.match(out, /\*\*Line 50:\*\*/);
+});
+
+test("Flags a top-level @staticmethod as a review issue", async () => {
+  const out = await generateLocalExplanation(
+    '@staticmethod\ndef helper():\n    pass\n',
+    "python"
+  );
+  assert.match(issuesSection(out), /@staticmethod.*normally used on methods inside a class/);
+});
+
+test("Does not flag @staticmethod used inside a class", async () => {
+  const out = await generateLocalExplanation(
+    'class Helper:\n    @staticmethod\n    def helper():\n        pass\n',
+    "python"
+  );
+  assert.doesNotMatch(issuesSection(out), /@staticmethod.*normally used on methods inside a class/);
+});
