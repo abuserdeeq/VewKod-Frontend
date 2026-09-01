@@ -2,8 +2,3 @@ node_modules
 .env
 .env.local
 dist
-
-# Generated at install time by scripts/copy-wasm.mjs (see the
-# "postinstall" npm script) — not source, regenerated from
-# node_modules on every install/CI run.
-public/wasm/
