@@ -18,6 +18,7 @@ import { analyzeSwiftAst } from "./swiftTreeSitter.js";
 import { analyzeCAst } from "./cTreeSitter.js";
 import { analyzeCppAst } from "./cppTreeSitter.js";
 import { analyzeBashAst } from "./bashTreeSitter.js";
+import { explainPythonLines } from "./pythonLineExplainer.js";
 
 const wasmPaths = {
   python: "./node_modules/tree-sitter-wasms/out/tree-sitter-python.wasm",
@@ -289,3 +290,36 @@ await runSamples("BASH", analyzeBashAst, {
 }
 `,
 }, wasmPaths);
+
+// ---------------- Python LINE-BY-LINE EXPLAINER (new pilot) ----------------
+
+console.log("\n\n########## PYTHON — LINE-BY-LINE EXPLAINER ##########");
+const lineExplainerSample = `def divide_scores(total, count):
+    if count > 0:
+        return total / count
+
+    return total / 0
+
+class Cart:
+    def add_item(self, item):
+        self.items.append(item)
+
+def process(data):
+    try:
+        result = risky_operation(data)
+    except Exception as e:
+        log(e)
+    for row in data:
+        print(row)
+    return result
+`;
+
+try {
+  const lineResults = await explainPythonLines(lineExplainerSample, wasmPaths);
+  for (const { line, text } of lineResults) {
+    console.log(`Line ${line}: ${text}`);
+  }
+} catch (err) {
+  console.error("ERROR — message:", err && err.message);
+  console.error("ERROR — stack:", err && err.stack);
+}
