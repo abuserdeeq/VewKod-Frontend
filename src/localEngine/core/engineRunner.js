@@ -93,9 +93,13 @@ function buildStructureBreakdown(structure) {
 
   if (structure.variables.length) {
     text += `### Variables\n`;
-    structure.variables.slice(0, 10).forEach((item) => { text += `- **Line ${item.line}:** Uses \`${item.name}\`.\n`; });
-    if (structure.variables.length > 10) text += `- ...and ${structure.variables.length - 10} more.\n`;
-    text += `\n`;
+    if (structure.variableSummary) {
+      text += `${structure.variableSummary}\n\n`;
+    } else {
+      structure.variables.slice(0, 10).forEach((item) => { text += `- **Line ${item.line}:** Uses \`${item.name}\`.\n`; });
+      if (structure.variables.length > 10) text += `- ...and ${structure.variables.length - 10} more.\n`;
+      text += `\n`;
+    }
   }
 
   if (structure.loops.length) {
