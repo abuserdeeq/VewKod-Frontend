@@ -409,7 +409,7 @@ export async function analyzeAst(code) {
   // Keep the cross-language safety/review checks that the legacy
   // regex engine provided for every language. The AST-specific checks
   // below remain authoritative for Python's structural cases.
-  const lines = code.split("\\n");
+  const lines = code.split("\n");
   const sharedIssues = findCommonIssues(lines);
   const issues = sharedIssues.filter((issue) =>
     !/error handler is empty/.test(issue.message) &&
