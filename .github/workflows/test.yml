@@ -25,7 +25,17 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        # Temporarily `npm install` instead of `npm ci` — package.json
+        # just gained new dependencies (web-tree-sitter,
+        # tree-sitter-wasms) that package-lock.json hasn't been
+        # regenerated for yet (no network access in the environment
+        # that edited package.json). `npm ci` requires the two files
+        # to already be in sync and would fail here; `npm install`
+        # updates the lock file as needed. Once this run succeeds and
+        # the updated package-lock.json this produces gets committed,
+        # this can switch back to `npm ci` for its stricter
+        # reproducibility guarantees.
+        run: npm install
 
       - name: Run full test suite (local-engine + component tests)
         run: npm run test:all
