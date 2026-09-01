@@ -22,6 +22,11 @@ import { findCommonIssues } from "../shared/patterns.js";
 
 export const id = "python";
 export const label = "Python";
+// Python explanations can safely show a little more source before
+// falling back to the remainder summary. This keeps medium-sized
+// Python snippets fully useful in Code Explanation without changing
+// the output limit for the other language analyzers.
+export const maxExplanationLines = 80;
 
 // Where to fetch/read the .wasm files from differs by environment:
 // in a real Node.js process (our test suite runs via `node --test`),
@@ -314,6 +319,28 @@ function explainNode(node) {
 // ------------------------------------------------------------
 
 function checkIssues(node, issues) {
+  // `@staticmethod` is intended for methods defined inside a class.
+  // A top-level function decorated with it is usually accidental and
+  // produces a staticmethod descriptor rather than a normal function.
+  if (node.type === "function_definition") {
+    const hasStaticMethodDecorator = node.namedChildren.some(
+      (child) => child.type === "decorator" && /^@staticmethod\s*$/.test(child.text.trim())
+    );
+    if (hasStaticMethodDecorator) {
+      let parent = node.parent;
+      while (parent && parent.type !== "class_definition" && parent.type !== "module") {
+        parent = parent.parent;
+      }
+      if (!parent || parent.type !== "class_definition") {
+        issues.push({
+          line: lineOf(node),
+          type: "review",
+          message: "`@staticmethod` is normally used on methods inside a class; this top-level function may be decorated unintentionally.",
+        });
+      }
+    }
+  }
+
   if (node.type === "except_clause") {
     const block = node.namedChildren.find((c) => c.type === "block");
     if (block && block.namedChildCount === 1 && block.namedChild(0).type === "pass_statement") {
