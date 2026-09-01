@@ -62,7 +62,7 @@ export async function explainCode(code, language = "auto", externalSignal) {
     }
     // Fallback to local explanation (covers network errors, timeouts,
     // and non-OK server responses).
-    const explanation = generateLocalExplanation(code, language);
+    const explanation = await generateLocalExplanation(code, language);
     return { explanation, source: "local" };
   } finally {
     clearTimeout(timeoutId);
