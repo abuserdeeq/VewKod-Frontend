@@ -316,5 +316,79 @@ export async function explainPythonLines(sourceCode, wasmPaths) {
   return results;
 }
 
+/**
+ * Same categories as the existing regex-based analyzeStructure():
+ * functions, classes, imports, variables, loops, conditionals,
+ * returns, outputs, comments — each a list of {line, name} (or just
+ * line numbers where no name applies). Used for the "Structure
+ * Breakdown" and "Overview" counts sections.
+ */
+export async function analyzePythonStructure(sourceCode, wasmPaths) {
+  await ensureReady(wasmPaths);
+
+  const parser = new Parser();
+  parser.setLanguage(PythonLang);
+  const tree = parser.parse(sourceCode);
+
+  const result = {
+    functions: [], classes: [], imports: [], variables: [],
+    loops: [], conditionals: [], returns: [], outputs: [], comments: [],
+  };
+
+  function addVariableTargets(node, lineNumber) {
+    // Handles a single identifier target, or a pattern_list from
+    // multiple/parallel assignment (`a, b = ...`).
+    if (!node) return;
+    if (node.type === "identifier") {
+      result.variables.push({ line: lineNumber, name: node.text });
+    } else if (node.type === "pattern_list") {
+      for (const child of node.namedChildren) {
+        if (child.type === "identifier") result.variables.push({ line: lineNumber, name: child.text });
+      }
+    }
+    // attribute targets (self.x = ...) deliberately excluded, same
+    // as the original regex version only matching bare identifiers.
+  }
+
+  function walk(node) {
+    const lineNumber = lineOf(node);
+
+    if (node.type === "comment") {
+      result.comments.push(lineNumber);
+    } else if (node.type === "function_definition") {
+      const nameNode = node.childForFieldName("name");
+      const paramsNode = node.childForFieldName("parameters");
+      result.functions.push({
+        line: lineNumber,
+        name: nameNode ? nameNode.text : "?",
+        parameters: paramsNode ? paramsNode.text.slice(1, -1).trim() : "",
+      });
+    } else if (node.type === "class_definition") {
+      const nameNode = node.childForFieldName("name");
+      result.classes.push({ line: lineNumber, name: nameNode ? nameNode.text : "?" });
+    } else if (node.type === "import_statement" || node.type === "import_from_statement") {
+      result.imports.push(lineNumber);
+    } else if (node.type === "assignment") {
+      addVariableTargets(node.childForFieldName("left"), lineNumber);
+    } else if (node.type === "augmented_assignment") {
+      addVariableTargets(node.childForFieldName("left"), lineNumber);
+    } else if (node.type === "for_statement" || node.type === "while_statement") {
+      result.loops.push(lineNumber);
+    } else if (node.type === "if_statement" || node.type === "elif_clause" || node.type === "else_clause") {
+      result.conditionals.push(lineNumber);
+    } else if (node.type === "return_statement") {
+      result.returns.push(lineNumber);
+    } else if (node.type === "call" && node.childForFieldName("function")?.text === "print") {
+      result.outputs.push(lineNumber);
+    }
+
+    for (const child of node.namedChildren) walk(child);
+  }
+
+  walk(tree.rootNode);
+
+  return result;
+}
+
 // SETUP: same as pythonTreeSitter.js — web-tree-sitter@0.22.6 +
 // node_modules/tree-sitter-wasms/out/tree-sitter-python.wasm

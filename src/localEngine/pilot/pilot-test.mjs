@@ -18,7 +18,7 @@ import { analyzeSwiftAst } from "./swiftTreeSitter.js";
 import { analyzeCAst } from "./cTreeSitter.js";
 import { analyzeCppAst } from "./cppTreeSitter.js";
 import { analyzeBashAst } from "./bashTreeSitter.js";
-import { explainPythonLines } from "./pythonLineExplainer.js";
+import { explainPythonLines, analyzePythonStructure } from "./pythonLineExplainer.js";
 
 const wasmPaths = {
   python: "./node_modules/tree-sitter-wasms/out/tree-sitter-python.wasm",
@@ -349,6 +349,17 @@ try {
   for (const { line, text } of round2Results) {
     console.log(`Line ${line}: ${text}`);
   }
+} catch (err) {
+  console.error("ERROR — message:", err && err.message);
+  console.error("ERROR — stack:", err && err.stack);
+}
+
+// ---------------- Python STRUCTURE BREAKDOWN (new pilot) ----------------
+
+console.log("\n\n########## PYTHON — STRUCTURE BREAKDOWN ##########");
+try {
+  const structure = await analyzePythonStructure(round2Sample, wasmPaths);
+  console.log(JSON.stringify(structure, null, 2));
 } catch (err) {
   console.error("ERROR — message:", err && err.message);
   console.error("ERROR — stack:", err && err.stack);
