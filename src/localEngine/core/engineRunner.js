@@ -170,7 +170,7 @@ export async function generateLocalExplanation(code, language) {
   const detectedLanguage = detectLanguage(code, language);
   const analyzer = getAnalyzer(detectedLanguage);
   const lines = code.split("\n");
-  const maxLines = 40;
+  const maxLines = analyzer.maxExplanationLines ?? 40;
 
   let structure, issues, lineByLineSection;
 
