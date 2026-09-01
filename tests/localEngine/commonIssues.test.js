@@ -182,3 +182,36 @@ test("SQL still reports its own existing checks alongside the shared ones", () =
   const out = generateLocalExplanation("SELECT * FROM users;", "sql");
   assert.match(issuesSection(out), /SELECT \*/);
 });
+
+
+// ============================================================
+// Python AST regression coverage: function parameters + shared checks
+// ============================================================
+
+test("Python Structure Breakdown preserves function parameters", async () => {
+  const out = await generateLocalExplanation(
+    'def init(self, name, age):\n    return name\n',
+    "python"
+  );
+  const section = out.split("## Structure Breakdown")[1].split("## Line-by-Line Explanation")[0];
+  assert.match(section, /`init\(\)` accepts `self, name, age`/);
+  assert.doesNotMatch(section, /does not define any parameters/);
+});
+
+test("Python AST analyzer keeps shared division-by-zero check", async () => {
+  const out = await generateLocalExplanation(
+    'def broken_function(x):\n    return x / 0\n',
+    "python"
+  );
+  assert.match(issuesSection(out), /divides by a literal `0`/);
+});
+
+test("Python AST analyzer keeps shared TODO/FIXME and eval checks", async () => {
+  const out = await generateLocalExplanation(
+    'def broken_function(x):\n    # TODO: replace this\n    eval(x)\n',
+    "python"
+  );
+  const section = issuesSection(out);
+  assert.match(section, /TODO\/FIXME marker/);
+  assert.match(section, /`eval\(\)` executes arbitrary code/);
+});
