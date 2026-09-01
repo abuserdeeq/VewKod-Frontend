@@ -243,3 +243,29 @@ test("Does not flag @staticmethod used inside a class", async () => {
   );
   assert.doesNotMatch(issuesSection(out), /@staticmethod.*normally used on methods inside a class/);
 });
+
+
+test("Python empty except points to the pass line and explains pass", async () => {
+  const out = await generateLocalExplanation(
+    'def swallow_errors():\n    try:\n        do_something()\n    except Exception:\n        pass\n',
+    "python"
+  );
+  assert.match(issuesSection(out), /\*\*Line 5:\*\*.*exception handler only contains `pass`/);
+  assert.match(out, /\*\*Line 5:\*\* Does nothing intentionally/);
+});
+
+test("Python top-level @staticmethod is detected even when decorator is a sibling node", async () => {
+  const out = await generateLocalExplanation(
+    '@staticmethod\ndef helper():\n    pass\n',
+    "python"
+  );
+  assert.match(issuesSection(out), /@staticmethod.*normally used on methods inside a class/);
+});
+
+test("Python division-by-zero uses a Python-specific runtime explanation", async () => {
+  const out = await generateLocalExplanation(
+    'def broken_function(x):\n    return x / 0\n',
+    "python"
+  );
+  assert.match(issuesSection(out), /will raise a `ZeroDivisionError`/);
+});
