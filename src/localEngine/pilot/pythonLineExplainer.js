@@ -110,11 +110,23 @@ function explainNode(node) {
       return "Starts a `try` block; if an error occurs anywhere inside it, control jumps to the matching `except` block below.";
 
     case "except_clause": {
-      // First named child (if present) is the exception type; a
-      // second is the `as name` binding.
+      // `except Exception as e:` is wrapped as a single "as_pattern"
+      // node (type + alias together), not two separate direct
+      // children of except_clause — confirmed by output showing the
+      // whole "Exception as e" text as one piece. Drill into
+      // as_pattern's own children to separate them.
       const kids = node.namedChildren;
-      const excType = kids[0] && kids[0].type !== "block" ? kids[0].text : null;
-      const excName = kids[1] && kids[1].type === "identifier" ? kids[1].text : null;
+      let excType = null;
+      let excName = null;
+      if (kids[0]) {
+        if (kids[0].type === "as_pattern") {
+          const parts = kids[0].namedChildren;
+          excType = parts[0] ? parts[0].text : null;
+          excName = parts[1] ? parts[1].text : null;
+        } else if (kids[0].type !== "block") {
+          excType = kids[0].text;
+        }
+      }
       if (!excType) return "Catches any exception raised in the `try` block above.";
       return excName
         ? `Catches a \`${excType}\` exception raised in the \`try\` block above, made available here as \`${excName}\`.`
