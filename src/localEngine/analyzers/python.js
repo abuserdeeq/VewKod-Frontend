@@ -493,6 +493,22 @@ export async function analyzeAst(code) {
 
   walk(root);
 
+  // Python's AST may record multiple uses/assignments of the same variable.
+  // Keep the existing occurrence count for transparency, but present a
+  // compact, de-duplicated name list so Structure Breakdown remains useful
+  // without hiding variables behind a generic "and N more" message.
+  if (structure.variables.length) {
+    const variableNames = [];
+    const seenVariableNames = new Set();
+    for (const item of structure.variables) {
+      if (!seenVariableNames.has(item.name)) {
+        seenVariableNames.add(item.name);
+        variableNames.push(item.name);
+      }
+    }
+    structure.variableSummary = `${structure.variables.length} variable occurrence${structure.variables.length !== 1 ? "s" : ""} found: ${variableNames.map((name) => `\`${name}\``).join(", ")}.`;
+  }
+
   lineExplanations.sort((a, b) => a.line - b.line);
 
   // Keep the issue list deterministic and prevent two checks from
