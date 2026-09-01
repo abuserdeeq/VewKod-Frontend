@@ -41,11 +41,12 @@ export async function analyzeSwiftAst(sourceCode, wasmPaths) {
       classes.push({ name: nameNode ? nameNode.text : "?", line: node.startPosition.row + 1 });
     }
 
-    // GUESS: "catch_clause" — Swift's do/catch. No parens around the
-    // error, so there's no explicit "handler" identifier to check for.
-    if (node.type === "catch_clause") {
-      const body = node.childForFieldName("body") || node.namedChildren.find((c) => c.type === "statements" || c.type === "block");
-      if (body && body.namedChildCount === 0) {
+    // An empty catch_block's only named child is catch_keyword — no
+    // "statements" node at all when the body is empty (confirmed via
+    // inspect-ast.mjs).
+    if (node.type === "catch_block") {
+      const body = node.namedChildren.find((c) => c.type === "statements");
+      if (!body) {
         issues.push({
           line: node.startPosition.row + 1,
           type: "review",

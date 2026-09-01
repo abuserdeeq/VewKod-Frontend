@@ -35,19 +35,26 @@ export async function analyzeKotlinAst(sourceCode, wasmPaths) {
 
   function walk(node) {
     if (node.type === "function_declaration") {
-      const nameNode = node.childForFieldName("name");
+      // Kotlin's function_declaration doesn't expose a "name" field —
+      // the name is a bare simple_identifier child (confirmed via
+      // inspect-ast.mjs). Fall back to searching for it directly.
+      const nameNode = node.childForFieldName("name") || node.namedChildren.find((c) => c.type === "simple_identifier");
       functions.push({ name: nameNode ? nameNode.text : "?", line: node.startPosition.row + 1 });
     }
 
     if (node.type === "class_declaration") {
-      const nameNode = node.childForFieldName("name");
+      const nameNode = node.childForFieldName("name") || node.namedChildren.find((c) => c.type === "simple_identifier" || c.type === "type_identifier");
       classes.push({ name: nameNode ? nameNode.text : "?", line: node.startPosition.row + 1 });
     }
 
-    // GUESS: "catch_block" (Kotlin syntax is `catch (e: Exception) { }`)
+    // An empty catch_block's only named children are the caught
+    // exception's identifier + type (e.g. `e`, `Exception`) — there
+    // is no "statements" child at all when the body is empty
+    // (confirmed via inspect-ast.mjs). A non-empty catch would have
+    // one.
     if (node.type === "catch_block") {
-      const body = node.childForFieldName("body") || node.namedChildren.find((c) => c.type === "block");
-      if (body && body.namedChildCount === 0) {
+      const body = node.namedChildren.find((c) => c.type === "statements");
+      if (!body) {
         issues.push({
           line: node.startPosition.row + 1,
           type: "review",
