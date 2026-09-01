@@ -323,3 +323,33 @@ try {
   console.error("ERROR — message:", err && err.message);
   console.error("ERROR — stack:", err && err.stack);
 }
+
+console.log("\n\n########## PYTHON — LINE-BY-LINE EXPLAINER (round 2: multi-assign / augmented / comprehension / ternary / super) ##########");
+const round2Sample = `class Shape:
+    def __init__(self, name):
+        super().__init__(name)
+        self.name = name
+
+    def area(self):
+        return 0
+
+def swap_demo():
+    a, b = 1, 2
+    a, b = b, a
+    total = 0
+    total += 5
+    squares = [x * 2 for x in range(10)]
+    evens = [x for x in range(20) if x % 2 == 0]
+    lookup = {k: v for k, v in pairs}
+    status = "adult" if age >= 18 else "minor"
+`;
+
+try {
+  const round2Results = await explainPythonLines(round2Sample, wasmPaths);
+  for (const { line, text } of round2Results) {
+    console.log(`Line ${line}: ${text}`);
+  }
+} catch (err) {
+  console.error("ERROR — message:", err && err.message);
+  console.error("ERROR — stack:", err && err.stack);
+}

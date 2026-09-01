@@ -165,13 +165,21 @@ function explainNode(node) {
         return `Displays ${mdCode(arg.text)} as program output.`;
       }
 
-      // obj.method(args)
+      // obj.method(args) — including the special case of
+      // super().method(args), which reads better with its own phrasing.
       if (inner.type === "call" && inner.childForFieldName("function")?.type === "attribute") {
         const fn = inner.childForFieldName("function");
         const obj = fn.childForFieldName("object");
         const attr = fn.childForFieldName("attribute");
         const argsNode = inner.childForFieldName("arguments");
         const args = argsNode ? argsNode.text.slice(1, -1).trim() : "";
+
+        if (obj && obj.type === "call" && obj.childForFieldName("function")?.text === "super") {
+          return args
+            ? `Calls the parent class's \`${attr.text}()\` method via \`super()\`, passing ${mdCode(args)}.`
+            : `Calls the parent class's \`${attr.text}()\` method via \`super()\`.`;
+        }
+
         return args
           ? `Calls \`.${attr.text}(${args})\` on ${mdCode(obj.text)}.`
           : `Calls \`.${attr.text}()\` on ${mdCode(obj.text)}.`;
@@ -187,11 +195,86 @@ function explainNode(node) {
           : `Calls \`${fnName}()\` without arguments.`;
       }
 
-      // Plain assignment: name = value (augmented/multi-assign not
-      // yet special-cased — falls through to this generic phrasing).
+      // Plain assignment: name = value. Also covers augmented
+      // assignment, multi/parallel assignment, comprehensions, and
+      // ternary conditional expressions used as the assigned value —
+      // each checked via its own distinct AST node type rather than
+      // regex, then falling through to the generic case last.
+      if (inner.type === "augmented_assignment") {
+        const left = inner.childForFieldName("left");
+        const opNode = inner.child(1); // operator token sits between left and right
+        const right = inner.childForFieldName("right");
+        const opVerbs = {
+          "+=": ["Increases", "by"],
+          "-=": ["Decreases", "by"],
+          "*=": ["Multiplies", "by"],
+          "/=": ["Divides", "by"],
+          "//=": ["Floor-divides", "by"],
+          "%=": ["Takes the remainder (modulo) of", "by"],
+          "**=": ["Raises", "to the power of"],
+        };
+        const opText = opNode ? opNode.text : "+=";
+        const [verb, prep] = opVerbs[opText] || ["Updates", "by"];
+        return `${verb} the variable ${mdCode(left ? left.text : "?")} ${prep} ${mdCode(right ? right.text : "?")}.`;
+      }
+
       if (inner.type === "assignment") {
         const left = inner.childForFieldName("left");
         const right = inner.childForFieldName("right");
+
+        // Multiple/parallel assignment: `a, b = b, a` or `x, y = 1, 2`
+        // — left is a pattern_list (more than one target).
+        if (left && left.type === "pattern_list") {
+          const targets = left.namedChildren.map((t) => t.text);
+          if (right && right.type === "expression_list") {
+            const values = right.namedChildren.map((v) => v.text);
+            if (values.length === targets.length) {
+              if (targets.length === 2 && values[0] === targets[1] && values[1] === targets[0]) {
+                return `Swaps the values of ${mdCode(targets[0])} and ${mdCode(targets[1])} using parallel assignment (both sides are evaluated before either variable is updated).`;
+              }
+              const pairs = targets.map((t, i) => `${mdCode(t)} becomes ${mdCode(values[i])}`).join(", ");
+              return `Assigns several variables at once (parallel assignment): ${pairs}.`;
+            }
+          }
+          return `Unpacks ${mdCode(right ? right.text : "?")} into ${targets.map(mdCode).join(", ")} in a single line.`;
+        }
+
+        if (left && left.type === "attribute") {
+          const objText = left.childForFieldName("object")?.text;
+          const kind = objText === "self" ? "instance attribute" : "attribute";
+          return `Sets the ${kind} ${mdCode(left.text)} to ${mdCode(right ? right.text : "?")}.`;
+        }
+
+        // Comprehensions used as the assigned value.
+        if (right && (right.type === "list_comprehension" || right.type === "set_comprehension" || right.type === "dictionary_comprehension")) {
+          const name = left ? left.text : "?";
+          const forClause = right.namedChildren.find((c) => c.type === "for_in_clause");
+          const ifClause = right.namedChildren.find((c) => c.type === "if_clause");
+          const target = forClause ? forClause.childForFieldName("left")?.text : "?";
+          const iterable = forClause ? forClause.childForFieldName("right")?.text : "?";
+          const condPart = ifClause ? ` (only when ${mdCode(ifClause.namedChildren[0]?.text || "?")} is true)` : "";
+
+          if (right.type === "dictionary_comprehension") {
+            const pair = right.namedChildren.find((c) => c.type === "pair");
+            const key = pair ? pair.childForFieldName("key")?.text : "?";
+            const val = pair ? pair.childForFieldName("value")?.text : "?";
+            return `Creates the dictionary ${mdCode(name)} by mapping ${mdCode(key)} to ${mdCode(val)} for each ${mdCode(target)} in ${mdCode(iterable)}${condPart} — a dict comprehension.`;
+          }
+          const kind = right.type === "list_comprehension" ? "list" : "set";
+          const expr = right.namedChildren[0]?.text || "?";
+          return `Creates the ${kind} ${mdCode(name)} by evaluating ${mdCode(expr)} for each ${mdCode(target)} in ${mdCode(iterable)}${condPart} — a ${kind} comprehension.`;
+        }
+
+        // Ternary/conditional expression used as the assigned value:
+        // `status = "adult" if age >= 18 else "minor"`.
+        if (right && right.type === "conditional_expression") {
+          const name = left ? left.text : "?";
+          const [whenTrue, condition, whenFalse] = right.namedChildren;
+          if (whenTrue && condition && whenFalse) {
+            return `Assigns ${mdCode(name)} to ${mdCode(whenTrue.text)} if ${mdCode(condition.text)} is true, otherwise ${mdCode(whenFalse.text)} — a conditional (ternary) expression.`;
+          }
+        }
+
         if (left && left.type === "attribute") {
           return `Sets the attribute ${mdCode(left.text)} to ${mdCode(right ? right.text : "?")}.`;
         }
