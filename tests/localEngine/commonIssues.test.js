@@ -221,6 +221,17 @@ test("Python AST analyzer keeps shared TODO/FIXME and eval checks", async () => 
 // Python explanation quality
 // ============================================================
 
+test("Python Structure Breakdown summarizes all variable occurrences with unique names", async () => {
+  const out = await generateLocalExplanation(
+    'def process(numbers):\n    total = 0\n    total += 10\n    a, b = 1, 2\n    a, b = b, a\n    squares = [n * n for n in numbers]\n    evens = [n for n in numbers if n % 2 == 0]\n    lookup = {n: n * n for n in numbers}\n    status = "big" if total > 5 else "small"\n    try:\n        risky = 10 / total\n    except Exception as e:\n        print(e)\n    return squares\n',
+    "python"
+  );
+  const section = out.split("## Structure Breakdown")[1].split("## Line-by-Line Explanation")[0];
+  assert.match(section, /9 variable occurrences found:/);
+  assert.match(section, /`total`, `a`, `b`, `squares`, `evens`, `lookup`, `status`, `risky`, `e`/);
+  assert.doesNotMatch(section, /\.\.\.and .* more/);
+});
+
 test("Python explanation shows all lines for a medium-sized snippet", async () => {
   const code = Array.from({ length: 50 }, (_, i) => `value_${i} = ${i}`).join("\n");
   const out = await generateLocalExplanation(code, "python");
