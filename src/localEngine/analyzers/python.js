@@ -237,6 +237,12 @@ function explainNode(node, symbols) {
         if (arg.type === "string" && arg.text.match(/^[fF]["']/)) {
           return `Displays a formatted message, embedding the enclosed expressions into the text.`;
         }
+        if (arg.type === "identifier" && symbols.get(arg.text) === "number") {
+          return `Displays the number stored in ${mdCode(arg.text)} as program output.`;
+        }
+        if (arg.type === "identifier" && symbols.get(arg.text) === "loop-item") {
+          return `Displays the current item (${mdCode(arg.text)}) as program output.`;
+        }
         return `Displays ${mdCode(arg.text)} as program output.`;
       }
 
