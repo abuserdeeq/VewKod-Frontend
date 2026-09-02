@@ -16,11 +16,6 @@ const sampleHistory = [
 
 describe("HistoryPanel", () => {
   beforeEach(() => {
-    Object.defineProperty(navigator, "clipboard", {
-      value: { writeText: vi.fn().mockResolvedValue(undefined) },
-      configurable: true,
-      writable: true,
-    });
     // Simulate a browser without the Web Share API so the clipboard
     // fallback path is exercised in tests.
     delete navigator.share;
@@ -91,6 +86,13 @@ describe("HistoryPanel", () => {
 
   it("copies a shareable summary to the clipboard when Share is clicked (no Web Share API) without restoring", async () => {
     const user = userEvent.setup();
+    // userEvent.setup() installs its own navigator.clipboard, so our
+    // mock must be applied AFTER it, not in beforeEach.
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+      configurable: true,
+      writable: true,
+    });
     const onRestore = vi.fn();
     render(
       <HistoryPanel

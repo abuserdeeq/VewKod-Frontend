@@ -5,11 +5,6 @@ import ResultDisplay from "../../src/components/ResultDisplay.jsx";
 
 describe("ResultDisplay", () => {
   beforeEach(() => {
-    Object.defineProperty(navigator, "clipboard", {
-      value: { writeText: vi.fn().mockResolvedValue(undefined) },
-      configurable: true,
-      writable: true,
-    });
     delete navigator.share;
   });
 
@@ -34,6 +29,11 @@ describe("ResultDisplay", () => {
 
   it("copies the result to the clipboard when Copy is clicked", async () => {
     const user = userEvent.setup();
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+      configurable: true,
+      writable: true,
+    });
     render(<ResultDisplay result="Some explanation text" source="ai" />);
 
     await user.click(screen.getByRole("button", { name: /^copy$/i }));
@@ -43,6 +43,11 @@ describe("ResultDisplay", () => {
 
   it("copies a shareable version to the clipboard when Share is clicked (no Web Share API)", async () => {
     const user = userEvent.setup();
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+      configurable: true,
+      writable: true,
+    });
     render(<ResultDisplay result="Some explanation text" source="ai" />);
 
     await user.click(screen.getByRole("button", { name: /share this explanation/i }));
@@ -53,6 +58,11 @@ describe("ResultDisplay", () => {
 
   it("uses the native share sheet when the Web Share API is available", async () => {
     const user = userEvent.setup();
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+      configurable: true,
+      writable: true,
+    });
     navigator.share = vi.fn().mockResolvedValue(undefined);
     render(<ResultDisplay result="Some explanation text" source="ai" />);
 
