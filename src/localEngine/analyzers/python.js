@@ -18,15 +18,9 @@
 // instead of the regex-based one.
 
 import Parser from "web-tree-sitter";
-import { findCommonIssues } from "../shared/patterns.js";
 
 export const id = "python";
 export const label = "Python";
-// Python explanations can safely show a little more source before
-// falling back to the remainder summary. This keeps medium-sized
-// Python snippets fully useful in Code Explanation without changing
-// the output limit for the other language analyzers.
-export const maxExplanationLines = 80;
 
 // Where to fetch/read the .wasm files from differs by environment:
 // in a real Node.js process (our test suite runs via `node --test`),
@@ -185,9 +179,6 @@ function explainNode(node) {
         : "Re-raises the exception currently being handled.";
     }
 
-    case "pass_statement":
-      return "Does nothing intentionally and lets execution continue with the next statement or block exit.";
-
     case "return_statement": {
       const value = node.namedChildren[0];
       return value
@@ -322,56 +313,13 @@ function explainNode(node) {
 // ------------------------------------------------------------
 
 function checkIssues(node, issues) {
-  // `@staticmethod` is intended for methods defined inside a class.
-  // Depending on the Python grammar version, decorators may be exposed
-  // as children of the function definition or as named siblings. Check
-  // both shapes so this review rule remains stable across parser updates.
-  if (node.type === "function_definition") {
-    const hasStaticMethodDecorator =
-      /(^|\n)\s*@staticmethod\s*(?:#.*)?$/.test(node.text) ||
-      (() => {
-        let sibling = node.previousNamedSibling;
-        while (sibling && sibling.type === "decorator") {
-          if (/^@staticmethod\s*(?:#.*)?$/.test(sibling.text.trim())) return true;
-          sibling = sibling.previousNamedSibling;
-        }
-        return false;
-      })();
-
-    if (hasStaticMethodDecorator) {
-      let parent = node.parent;
-      while (parent && parent.type !== "class_definition" && parent.type !== "module") {
-        parent = parent.parent;
-      }
-      if (!parent || parent.type !== "class_definition") {
-        const inlineDecorator = node.namedChildren.find(
-          (child) => child.type === "decorator" && /^@staticmethod\s*(?:#.*)?$/.test(child.text.trim())
-        );
-        const siblingDecorator = node.previousNamedSibling?.type === "decorator"
-          ? node.previousNamedSibling
-          : null;
-        const decoratorLine = inlineDecorator
-          ? lineOf(inlineDecorator)
-          : siblingDecorator
-            ? lineOf(siblingDecorator)
-            : lineOf(node);
-        issues.push({
-          line: decoratorLine,
-          type: "review",
-          message: "`@staticmethod` is normally used on methods inside a class; this top-level function may be decorated unintentionally.",
-        });
-      }
-    }
-  }
-
   if (node.type === "except_clause") {
     const block = node.namedChildren.find((c) => c.type === "block");
     if (block && block.namedChildCount === 1 && block.namedChild(0).type === "pass_statement") {
-      const passStatement = block.namedChild(0);
       issues.push({
-        line: lineOf(passStatement),
+        line: lineOf(node),
         type: "review",
-        message: "This exception handler only contains `pass`, so the exception is silently ignored. Consider logging or handling it appropriately.",
+        message: "This error handler is empty — the exception is silently swallowed. Consider at least logging it, even if no other action is needed.",
       });
     }
   }
@@ -410,13 +358,7 @@ function updateStructure(node, structure) {
     structure.comments.push(lineNumber);
   } else if (node.type === "function_definition") {
     const nameNode = node.childForFieldName("name");
-    const paramsNode = node.childForFieldName("parameters");
-    const parameters = paramsNode ? paramsNode.text.slice(1, -1).trim() : "";
-    structure.functions.push({
-      line: lineNumber,
-      name: nameNode ? nameNode.text : "?",
-      parameters,
-    });
+    structure.functions.push({ line: lineNumber, name: nameNode ? nameNode.text : "?" });
   } else if (node.type === "class_definition") {
     const nameNode = node.childForFieldName("name");
     structure.classes.push({ line: lineNumber, name: nameNode ? nameNode.text : "?" });
@@ -457,26 +399,7 @@ export async function analyzeAst(code) {
     functions: [], classes: [], imports: [], variables: [],
     loops: [], conditionals: [], returns: [], outputs: [], comments: [],
   };
-  // Keep the cross-language safety/review checks that the legacy
-  // regex engine provided for every language. The AST-specific checks
-  // below remain authoritative for Python's structural cases.
-  const lines = code.split("\n");
-  const sharedIssues = findCommonIssues(lines).map((issue) => {
-    if (/divides by a literal `0`/.test(issue.message)) {
-      return {
-        ...issue,
-        message: "This divides by the literal `0`, which will raise a `ZeroDivisionError` when this line executes. Double-check this value.",
-      };
-    }
-    return issue;
-  });
-
-  // Python owns the AST-specific versions of these checks, so remove
-  // the legacy regex copies to avoid duplicate findings.
-  const issues = sharedIssues.filter((issue) =>
-    !/error handler is empty/.test(issue.message) &&
-    !/can never be reached/.test(issue.message)
-  );
+  const issues = [];
   const lineExplanations = [];
 
   function walk(node) {
@@ -493,33 +416,7 @@ export async function analyzeAst(code) {
 
   walk(root);
 
-  // Python's AST may record multiple uses/assignments of the same variable.
-  // Keep the existing occurrence count for transparency, but present a
-  // compact, de-duplicated name list so Structure Breakdown remains useful
-  // without hiding variables behind a generic "and N more" message.
-  if (structure.variables.length) {
-    const variableNames = [];
-    const seenVariableNames = new Set();
-    for (const item of structure.variables) {
-      if (!seenVariableNames.has(item.name)) {
-        seenVariableNames.add(item.name);
-        variableNames.push(item.name);
-      }
-    }
-    structure.variableSummary = `${structure.variables.length} variable occurrence${structure.variables.length !== 1 ? "s" : ""} found: ${variableNames.map((name) => `\`${name}\``).join(", ")}.`;
-  }
-
   lineExplanations.sort((a, b) => a.line - b.line);
 
-  // Keep the issue list deterministic and prevent two checks from
-  // reporting the exact same finding.
-  const severity = { security: 0, warning: 1, review: 2 };
-  const uniqueIssues = Array.from(
-    new Map(issues.map((issue) => [`${issue.line}|${issue.type}|${issue.message}`, issue])).values()
-  ).sort((a, b) => {
-    const bySeverity = (severity[a.type] ?? 3) - (severity[b.type] ?? 3);
-    return bySeverity || a.line - b.line;
-  });
-
-  return { structure, issues: uniqueIssues, lineExplanations };
+  return { structure, issues, lineExplanations };
 }
