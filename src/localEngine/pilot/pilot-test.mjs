@@ -1,11 +1,11 @@
 // Run: node src/localEngine/pilot/pilot-test.mjs
 //
-// Tests every language pilot currently under development. Not part
-// of the app or the test suite — paste whatever this prints back
-// into the chat.
+// Tests every language pilot currently under development (Python
+// graduated to production — see src/localEngine/analyzers/python.js
+// — so it's no longer tested here). Not part of the app or the test
+// suite — paste whatever this prints back into the chat.
 
 import fs from "node:fs";
-import { analyzePythonAst } from "./pythonTreeSitter.js";
 import { analyzeJavaScriptAst } from "./jsTreeSitter.js";
 import { analyzeTypeScriptAst } from "./tsTreeSitter.js";
 import { analyzeGoAst } from "./goTreeSitter.js";
@@ -18,10 +18,8 @@ import { analyzeSwiftAst } from "./swiftTreeSitter.js";
 import { analyzeCAst } from "./cTreeSitter.js";
 import { analyzeCppAst } from "./cppTreeSitter.js";
 import { analyzeBashAst } from "./bashTreeSitter.js";
-import { explainPythonLines, analyzePythonStructure } from "./pythonLineExplainer.js";
 
 const wasmPaths = {
-  python: "./node_modules/tree-sitter-wasms/out/tree-sitter-python.wasm",
   javascript: "./node_modules/tree-sitter-wasms/out/tree-sitter-javascript.wasm",
   typescript: "./node_modules/tree-sitter-wasms/out/tree-sitter-typescript.wasm",
   go: "./node_modules/tree-sitter-wasms/out/tree-sitter-go.wasm",
@@ -56,25 +54,6 @@ async function runSamples(label, analyzeFn, samples, wasmPaths) {
     }
   }
 }
-
-// ---------------- Python ----------------
-await runSamples("PYTHON", analyzePythonAst, {
-  "unreachable + empty except": `def divide_scores(total, count):
-    if count > 0:
-        return total / count
-        print("This will never run")
-
-    return total / 0
-
-def process(data):
-    try:
-        result = risky_operation(data)
-    except Exception:
-        pass
-
-    return result
-`,
-}, wasmPaths);
 
 // ---------------- JavaScript ----------------
 await runSamples("JAVASCRIPT", analyzeJavaScriptAst, {
@@ -290,77 +269,3 @@ await runSamples("BASH", analyzeBashAst, {
 }
 `,
 }, wasmPaths);
-
-// ---------------- Python LINE-BY-LINE EXPLAINER (new pilot) ----------------
-
-console.log("\n\n########## PYTHON — LINE-BY-LINE EXPLAINER ##########");
-const lineExplainerSample = `def divide_scores(total, count):
-    if count > 0:
-        return total / count
-
-    return total / 0
-
-class Cart:
-    def add_item(self, item):
-        self.items.append(item)
-
-def process(data):
-    try:
-        result = risky_operation(data)
-    except Exception as e:
-        log(e)
-    for row in data:
-        print(row)
-    return result
-`;
-
-try {
-  const lineResults = await explainPythonLines(lineExplainerSample, wasmPaths);
-  for (const { line, text } of lineResults) {
-    console.log(`Line ${line}: ${text}`);
-  }
-} catch (err) {
-  console.error("ERROR — message:", err && err.message);
-  console.error("ERROR — stack:", err && err.stack);
-}
-
-console.log("\n\n########## PYTHON — LINE-BY-LINE EXPLAINER (round 2: multi-assign / augmented / comprehension / ternary / super) ##########");
-const round2Sample = `class Shape:
-    def __init__(self, name):
-        super().__init__(name)
-        self.name = name
-
-    def area(self):
-        return 0
-
-def swap_demo():
-    a, b = 1, 2
-    a, b = b, a
-    total = 0
-    total += 5
-    squares = [x * 2 for x in range(10)]
-    evens = [x for x in range(20) if x % 2 == 0]
-    lookup = {k: v for k, v in pairs}
-    status = "adult" if age >= 18 else "minor"
-`;
-
-try {
-  const round2Results = await explainPythonLines(round2Sample, wasmPaths);
-  for (const { line, text } of round2Results) {
-    console.log(`Line ${line}: ${text}`);
-  }
-} catch (err) {
-  console.error("ERROR — message:", err && err.message);
-  console.error("ERROR — stack:", err && err.stack);
-}
-
-// ---------------- Python STRUCTURE BREAKDOWN (new pilot) ----------------
-
-console.log("\n\n########## PYTHON — STRUCTURE BREAKDOWN ##########");
-try {
-  const structure = await analyzePythonStructure(round2Sample, wasmPaths);
-  console.log(JSON.stringify(structure, null, 2));
-} catch (err) {
-  console.error("ERROR — message:", err && err.message);
-  console.error("ERROR — stack:", err && err.stack);
-}
