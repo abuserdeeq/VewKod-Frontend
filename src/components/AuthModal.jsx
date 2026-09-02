@@ -218,7 +218,7 @@ export default function AuthModal({ open, onClose }) {
                     }}
                     className="text-blue-400 hover:text-blue-300 transition-colors"
                   >
-                    {isLogin ? "Register" : "Log in"}
+                    {isLogin ? "Sign up" : "Log in"}
                   </button>
                 </p>
               </form>
