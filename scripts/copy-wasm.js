@@ -24,6 +24,16 @@ const copies = [
     to: "public/wasm/tree-sitter-python.wasm",
     note: "Python grammar",
   },
+  {
+    from: "node_modules/tree-sitter-wasms/out/tree-sitter-javascript.wasm",
+    to: "public/wasm/tree-sitter-javascript.wasm",
+    note: "JavaScript grammar",
+  },
+  {
+    from: "node_modules/tree-sitter-wasms/out/tree-sitter-typescript.wasm",
+    to: "public/wasm/tree-sitter-typescript.wasm",
+    note: "TypeScript grammar",
+  },
 ];
 
 fs.mkdirSync("public/wasm", { recursive: true });
