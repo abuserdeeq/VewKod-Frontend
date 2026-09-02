@@ -74,6 +74,36 @@ function mdCode(text) {
   return `\`${text}\``;
 }
 
+// Lightweight per-function symbol tracking — enough to answer "is
+// this name a list/dict/number/loop-item in the current function?"
+// so a handful of explanations can be more specific ("the current
+// item (`user`)" instead of just "`user`"). Deliberately not a full
+// scope/type system: built fresh per function_definition, so the
+// same name in two different functions never cross-contaminates.
+function buildSymbols(funcBodyNode) {
+  const symbols = new Map();
+  function scan(node) {
+    if (node.type === "assignment") {
+      const left = node.childForFieldName("left");
+      const right = node.childForFieldName("right");
+      if (left && left.type === "identifier" && right) {
+        if (right.type === "list" || right.type === "list_comprehension") symbols.set(left.text, "list");
+        else if (right.type === "dictionary" || right.type === "dictionary_comprehension") symbols.set(left.text, "dictionary");
+        else if (right.type === "set" || right.type === "set_comprehension") symbols.set(left.text, "set");
+        else if (right.type === "string") symbols.set(left.text, "string");
+        else if (right.type === "integer" || right.type === "float") symbols.set(left.text, "number");
+      }
+    }
+    if (node.type === "for_statement") {
+      const left = node.childForFieldName("left");
+      if (left && left.type === "identifier") symbols.set(left.text, "loop-item");
+    }
+    for (const child of node.namedChildren) scan(child);
+  }
+  if (funcBodyNode) scan(funcBodyNode);
+  return symbols;
+}
+
 function lineOf(node) {
   return node.startPosition.row + 1;
 }
@@ -86,7 +116,7 @@ function isRangeCall(node) {
 // Per-line explanation (mirrors the old explainLine's phrasing)
 // ------------------------------------------------------------
 
-function explainNode(node) {
+function explainNode(node, symbols) {
   switch (node.type) {
     case "import_statement":
     case "import_from_statement":
@@ -137,6 +167,15 @@ function explainNode(node) {
 
     case "if_statement": {
       const condition = node.childForFieldName("condition");
+      if (condition && condition.type === "identifier") {
+        const role = symbols.get(condition.text);
+        if (role === "loop-item") {
+          return `Checks whether the current item (${mdCode(condition.text)}) is true before running the code that follows.`;
+        }
+        if (role === "number") {
+          return `Checks whether the number stored in ${mdCode(condition.text)} is truthy (non-zero) before running the code that follows.`;
+        }
+      }
       return `Checks whether ${mdCode(condition ? condition.text : "?")} is true before running the code that follows.`;
     }
 
@@ -214,6 +253,13 @@ function explainNode(node) {
             : `Calls the parent class's \`${attr.text}()\` method via \`super()\`.`;
         }
 
+        if (obj && obj.type === "identifier" && symbols.has(obj.text)) {
+          const role = symbols.get(obj.text);
+          return args
+            ? `Calls \`.${attr.text}(${args})\` on the ${mdCode(obj.text)} ${role}.`
+            : `Calls \`.${attr.text}()\` on the ${mdCode(obj.text)} ${role}.`;
+        }
+
         return args
           ? `Calls \`.${attr.text}(${args})\` on ${mdCode(obj.text)}.`
           : `Calls \`.${attr.text}()\` on ${mdCode(obj.text)}.`;
@@ -269,6 +315,21 @@ function explainNode(node) {
           const objText = left.childForFieldName("object")?.text;
           const kind = objText === "self" ? "instance attribute" : "attribute";
           return `Sets the ${kind} ${mdCode(left.text)} to ${mdCode(right ? right.text : "?")}.`;
+        }
+
+        // Plain list/dict/set literal (not a comprehension) — e.g.
+        // `x = [1, 2, 3]`.
+        if (right && right.type === "list") {
+          const items = right.namedChildren.map((c) => c.text).join(", ");
+          return items
+            ? `Creates the list ${mdCode(left.text)}, containing ${mdCode(items)}.`
+            : `Creates the empty list ${mdCode(left.text)}.`;
+        }
+        if (right && right.type === "dictionary") {
+          return `Creates the dictionary ${mdCode(left.text)}.`;
+        }
+        if (right && right.type === "set") {
+          return `Creates the set ${mdCode(left.text)}.`;
         }
 
         if (right && (right.type === "list_comprehension" || right.type === "set_comprehension" || right.type === "dictionary_comprehension")) {
@@ -332,6 +393,103 @@ function checkIssues(node, issues) {
         line: lineOf(next),
         type: "warning",
         message: "This line comes right after a `return` in the same block, so it can never be reached.",
+      });
+    }
+  }
+
+  // Python-specific dangerous-call checks (os.system/subprocess with a
+  // non-literal command, pickle deserialization, unsafe yaml.load).
+  // These existed in the old regex-based python.js as its own
+  // findIssues() checks (on top of the shared ones) and were lost
+  // when this file was replaced — restored here via AST instead.
+  if (node.type === "call") {
+    const fn = node.childForFieldName("function");
+    if (fn && fn.type === "attribute") {
+      const obj = fn.childForFieldName("object")?.text;
+      const attr = fn.childForFieldName("attribute")?.text;
+      const argsNode = node.childForFieldName("arguments");
+      const firstArg = argsNode ? argsNode.namedChildren[0] : null;
+
+      if (obj === "os" && attr === "system" && firstArg && firstArg.type !== "string") {
+        issues.push({
+          line: lineOf(node),
+          type: "security",
+          message: "Calling `os.system()` with a non-literal command can allow command injection if any part of the value comes from user input. Consider `subprocess.run([...])` with a list of arguments instead.",
+        });
+      }
+
+      if (obj === "subprocess" && ["run", "call", "Popen", "check_call", "check_output"].includes(attr)) {
+        const hasShellTrue = argsNode?.namedChildren.some(
+          (a) => a.type === "keyword_argument" && a.childForFieldName("name")?.text === "shell" && a.childForFieldName("value")?.text === "True"
+        );
+        if (hasShellTrue) {
+          issues.push({
+            line: lineOf(node),
+            type: "security",
+            message: "This uses `subprocess...(..., shell=True)`, which can allow command injection if any part of the command comes from user input. Prefer passing a list of arguments without `shell=True`.",
+          });
+        }
+      }
+
+      if (obj === "pickle" && (attr === "loads" || attr === "load")) {
+        issues.push({
+          line: lineOf(node),
+          type: "security",
+          message: "`pickle.load()`/`pickle.loads()` can execute arbitrary code when deserializing untrusted data. Avoid unpickling data from an untrusted source.",
+        });
+      }
+
+      if (obj === "yaml" && attr === "load") {
+        const hasSafeLoader = argsNode?.namedChildren.some(
+          (a) => a.type === "keyword_argument" && a.childForFieldName("name")?.text === "Loader" && /SafeLoader/.test(a.childForFieldName("value")?.text || "")
+        );
+        if (!hasSafeLoader) {
+          issues.push({
+            line: lineOf(node),
+            type: "security",
+            message: "`yaml.load()` without `Loader=yaml.SafeLoader` can execute arbitrary code from the input. Use `yaml.safe_load()` or pass `Loader=yaml.SafeLoader`.",
+          });
+        }
+      }
+    }
+  }
+
+  // Unused variable: assigned within a function but never referenced
+  // again anywhere else in that same function. Scoped per-function
+  // (not globally) so the same name in two different functions can't
+  // cross-contaminate. AST-based, so this is a real reference count,
+  // not a text-search guess.
+  if (node.type === "function_definition") {
+    checkUnusedVariables(node, issues);
+  }
+}
+
+function checkUnusedVariables(funcNode, issues) {
+  const assigned = new Map(); // name -> line of first assignment
+  const identifierCounts = new Map(); // name -> total identifier occurrences
+
+  function collect(node) {
+    if (node.type === "identifier") {
+      identifierCounts.set(node.text, (identifierCounts.get(node.text) || 0) + 1);
+    }
+    if ((node.type === "assignment" || node.type === "augmented_assignment")) {
+      const left = node.childForFieldName("left");
+      if (left && left.type === "identifier" && !assigned.has(left.text)) {
+        assigned.set(left.text, lineOf(node));
+      }
+    }
+    for (const child of node.namedChildren) collect(child);
+  }
+  collect(funcNode);
+
+  for (const [name, line] of assigned) {
+    // Only ever appears once (the assignment target itself) → never
+    // read anywhere else in the function.
+    if ((identifierCounts.get(name) || 0) <= 1) {
+      issues.push({
+        line,
+        type: "review",
+        message: `The variable \`${name}\` is assigned here but doesn't appear to be used again — it may not be used later in the function, so consider removing it if it isn't needed.`,
       });
     }
   }
@@ -432,22 +590,37 @@ export async function analyzeAst(code) {
   );
   const lineExplanations = [];
 
-  function walk(node) {
+  function walk(node, symbols) {
     updateStructure(node, structure);
     // AST-based checks — genuinely more reliable than regex/
     // indentation guessing for these two specifically (this is what
     // the whole Tree-sitter migration originally set out to fix).
     checkIssues(node, issues);
 
-    const explanation = explainNode(node);
+    // Entering a new function scope: build a fresh symbol map from
+    // its own body and use that for everything inside it, instead of
+    // inheriting the caller's. This is what keeps the same variable
+    // name in two different functions from cross-contaminating.
+    if (node.type === "function_definition") {
+      const explanation = explainNode(node, symbols);
+      if (explanation) {
+        lineExplanations.push({ line: lineOf(node), text: explanation });
+      }
+      const body = node.childForFieldName("body");
+      const localSymbols = buildSymbols(body);
+      for (const child of node.namedChildren) walk(child, localSymbols);
+      return;
+    }
+
+    const explanation = explainNode(node, symbols);
     if (explanation) {
       lineExplanations.push({ line: lineOf(node), text: explanation });
     }
 
-    for (const child of node.namedChildren) walk(child);
+    for (const child of node.namedChildren) walk(child, symbols);
   }
 
-  walk(root);
+  walk(root, new Map());
 
   lineExplanations.sort((a, b) => a.line - b.line);
 
