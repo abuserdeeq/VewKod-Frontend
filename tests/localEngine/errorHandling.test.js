@@ -10,7 +10,7 @@ function lineOf(explanation, lineNumber) {
   return match ? match[1] : null;
 }
 
-test("JavaScript: try/catch/throw are explained specifically, not generically", () => {
+test("JavaScript: try/catch/throw are explained specifically, not generically", async () => {
   const code = [
     "async function getUserData(userId) {",
     "    try {",
@@ -29,7 +29,7 @@ test("JavaScript: try/catch/throw are explained specifically, not generically", 
     "}",
   ].join("\n");
 
-  const out = generateLocalExplanation(code, "javascript");
+  const out = await generateLocalExplanation(code, "javascript");
 
   assert.match(lineOf(out, 2), /Starts a `try` block/);
   assert.match(lineOf(out, 6), /Throws an error/);
@@ -46,7 +46,7 @@ test("JavaScript: try/catch/throw are explained specifically, not generically", 
   assert.doesNotMatch(out, /getUserData.*may not be used later/);
 });
 
-test("TypeScript inherits the same try/catch/throw handling via the JS analyzer", () => {
+test("TypeScript inherits the same try/catch/throw handling via the JS analyzer", async () => {
   const code = [
     "function parse(input: string): number {",
     "  try {",
@@ -57,14 +57,14 @@ test("TypeScript inherits the same try/catch/throw handling via the JS analyzer"
     "}",
   ].join("\n");
 
-  const out = generateLocalExplanation(code, "typescript");
+  const out = await generateLocalExplanation(code, "typescript");
 
   assert.match(lineOf(out, 2), /Starts a `try` block/);
   assert.match(lineOf(out, 4), /Catches any error thrown/);
   assert.match(lineOf(out, 5), /Throws an error/);
 });
 
-test("Python: try/except/finally/raise are explained specifically", () => {
+test("Python: try/except/finally/raise are explained specifically", async () => {
   const code = [
     "def divide(a, b):",
     "    try:",
@@ -77,7 +77,7 @@ test("Python: try/except/finally/raise are explained specifically", () => {
     "    return result",
   ].join("\n");
 
-  const out = generateLocalExplanation(code, "python");
+  const out = await generateLocalExplanation(code, "python");
 
   assert.match(lineOf(out, 2), /Starts a `try` block/);
   assert.match(lineOf(out, 4), /Catches a `ZeroDivisionError` exception.*`e`/);
@@ -89,18 +89,18 @@ test("Python: try/except/finally/raise are explained specifically", () => {
   assert.doesNotMatch(out, /divide.*may not be used later/);
 });
 
-test("Python: a genuinely unused variable is still flagged (the fix doesn't over-correct)", () => {
+test("Python: a genuinely unused variable is still flagged (the fix doesn't over-correct)", async () => {
   const code = [
     "def compute():",
     "    unused_value = 42",
     "    return 1",
   ].join("\n");
 
-  const out = generateLocalExplanation(code, "python");
+  const out = await generateLocalExplanation(code, "python");
   assert.match(out, /unused_value.*may not be used later/);
 });
 
-test("JavaScript: a template literal value doesn't break the Markdown code span", () => {
+test("JavaScript: a template literal value doesn't break the Markdown code span", async () => {
   const code = [
     "async function getUserData(userId) {",
     "  const response = await fetch(`/api/users/${userId}`);",
@@ -108,7 +108,7 @@ test("JavaScript: a template literal value doesn't break the Markdown code span"
     "}",
   ].join("\n");
 
-  const out = generateLocalExplanation(code, "javascript");
+  const out = await generateLocalExplanation(code, "javascript");
   const line = lineOf(out, 2);
 
   // A single backtick wrap around a value that itself contains backticks

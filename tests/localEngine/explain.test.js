@@ -13,7 +13,7 @@ function lineOf(explanation, lineNumber) {
   return match ? match[1] : null;
 }
 
-test("Python: list/loop-item symbol tracking + method calls", () => {
+test("Python: list/loop-item symbol tracking + method calls", async () => {
   const code = [
     "def get_active_users(users):",
     "    active = []",
@@ -23,7 +23,7 @@ test("Python: list/loop-item symbol tracking + method calls", () => {
     "    return active",
   ].join("\n");
 
-  const out = generateLocalExplanation(code, "python");
+  const out = await generateLocalExplanation(code, "python");
 
   // `users` is a function *parameter* here (not a literal list
   // assignment), so the engine correctly doesn't claim to know its
@@ -33,7 +33,7 @@ test("Python: list/loop-item symbol tracking + method calls", () => {
   assert.match(lineOf(out, 5), /Calls `\.append\(user\)` on the `active` list/);
 });
 
-test("Python: instance attributes, class inheritance, super() call, and decorators", () => {
+test("Python: instance attributes, class inheritance, super() call, and decorators", async () => {
   const code = [
     "class Animal:",
     "    def __init__(self, name, sound):",
@@ -49,7 +49,7 @@ test("Python: instance attributes, class inheritance, super() call, and decorato
     "    return n",
   ].join("\n");
 
-  const out = generateLocalExplanation(code, "python");
+  const out = await generateLocalExplanation(code, "python");
 
   assert.doesNotMatch(lineOf(out, 1), /inherits/);
   assert.match(lineOf(out, 3), /instance attribute `self\.name` to `name`/);
@@ -58,7 +58,7 @@ test("Python: instance attributes, class inheritance, super() call, and decorato
   assert.match(lineOf(out, 10), /Applies the `@lru_cache\(maxsize=32\)` decorator/);
 });
 
-test("JavaScript: constructor, class methods, extends, super() call, and destructuring", () => {
+test("JavaScript: constructor, class methods, extends, super() call, and destructuring", async () => {
   const code = [
     "class Shape {",
     "  constructor(name) {",
@@ -79,7 +79,7 @@ test("JavaScript: constructor, class methods, extends, super() call, and destruc
     "const [first, ...rest] = getList();",
   ].join("\n");
 
-  const out = generateLocalExplanation(code, "javascript");
+  const out = await generateLocalExplanation(code, "javascript");
 
   assert.match(lineOf(out, 2), /Defines the constructor.*accepts `name`/);
   assert.match(lineOf(out, 5), /Defines the `describe` method/);
@@ -89,7 +89,7 @@ test("JavaScript: constructor, class methods, extends, super() call, and destruc
   assert.match(lineOf(out, 17), /Destructures.*by position.*`first`, `rest`/);
 });
 
-test("Go: multi-value short declaration + unchecked err issue", () => {
+test("Go: multi-value short declaration + unchecked err issue", async () => {
   const code = [
     "package main",
     "",
@@ -105,13 +105,13 @@ test("Go: multi-value short declaration + unchecked err issue", () => {
     "}",
   ].join("\n");
 
-  const out = generateLocalExplanation(code, "go");
+  const out = await generateLocalExplanation(code, "go");
 
   assert.match(lineOf(out, 10), /storing the result in `result` and any error in `err`/);
   assert.match(out, /doesn't appear to be checked with `if err != nil`/);
 });
 
-test("PHP: variables keep their $ sigil in descriptions", () => {
+test("PHP: variables keep their $ sigil in descriptions", async () => {
   const code = [
     "<?php",
     "function greetUsers($users) {",
@@ -123,14 +123,14 @@ test("PHP: variables keep their $ sigil in descriptions", () => {
     "}",
   ].join("\n");
 
-  const out = generateLocalExplanation(code, "php");
+  const out = await generateLocalExplanation(code, "php");
 
   assert.match(lineOf(out, 3), /\$users.*\$user/);
   assert.match(lineOf(out, 4), /`\$user`/);
   assert.doesNotMatch(lineOf(out, 4), /\(a array\)/); // grammar bug regression guard
 });
 
-test("Kotlin: nullable type declarations and !! inside call expressions", () => {
+test("Kotlin: nullable type declarations and !! inside call expressions", async () => {
   const code = [
     "fun main() {",
     "    var nickname: String? = null",
@@ -138,13 +138,13 @@ test("Kotlin: nullable type declarations and !! inside call expressions", () => 
     "}",
   ].join("\n");
 
-  const out = generateLocalExplanation(code, "kotlin");
+  const out = await generateLocalExplanation(code, "kotlin");
 
   assert.match(lineOf(out, 2), /Declares the mutable property `nickname`/);
   assert.match(out, /non-null assertion throws if the value is actually `null`/);
 });
 
-test("Rust: implicit-return expressions and .unwrap() issue", () => {
+test("Rust: implicit-return expressions and .unwrap() issue", async () => {
   const code = [
     "fn divide(a: i32, b: i32) -> i32 {",
     "    a / b",
@@ -156,13 +156,13 @@ test("Rust: implicit-return expressions and .unwrap() issue", () => {
     "}",
   ].join("\n");
 
-  const out = generateLocalExplanation(code, "rust");
+  const out = await generateLocalExplanation(code, "rust");
 
   assert.match(lineOf(out, 2), /implicit-return/);
   assert.match(out, /`\.unwrap\(\)` panics/);
 });
 
-test("Python: same variable name in two different functions doesn't cross-contaminate", () => {
+test("Python: same variable name in two different functions doesn't cross-contaminate", async () => {
   const code = [
     "def first():",
     "    x = [1, 2, 3]",
@@ -175,14 +175,14 @@ test("Python: same variable name in two different functions doesn't cross-contam
     "        print(x)",
   ].join("\n");
 
-  const out = generateLocalExplanation(code, "python");
+  const out = await generateLocalExplanation(code, "python");
 
   assert.match(lineOf(out, 2), /Creates the list `x`/);
   assert.match(lineOf(out, 7), /Assigns `5` to the variable `x`/);
   assert.match(lineOf(out, 8), /number stored in `x`/);
   assert.match(lineOf(out, 9), /number stored in `x`/);
 });
-test("JavaScript: same variable name in two different functions doesn't cross-contaminate", () => {
+test("JavaScript: same variable name in two different functions doesn't cross-contaminate", async () => {
   const code = [
     "function first() {",
     "  const x = [1, 2, 3];",
@@ -199,14 +199,14 @@ test("JavaScript: same variable name in two different functions doesn't cross-co
     "}",
   ].join("\n");
 
-  const out = generateLocalExplanation(code, "javascript");
+  const out = await generateLocalExplanation(code, "javascript");
 
   assert.match(lineOf(out, 2), /Creates the `const` array `x`/);
   assert.match(lineOf(out, 10), /number stored in `x`/);
   assert.match(lineOf(out, 11), /number stored in `x`/);
 });
 
-test("Java: same variable name in two different methods doesn't cross-contaminate", () => {
+test("Java: same variable name in two different methods doesn't cross-contaminate", async () => {
   const code = [
     "public class Test {",
     "  public static void first() {",
@@ -222,13 +222,13 @@ test("Java: same variable name in two different methods doesn't cross-contaminat
     "}",
   ].join("\n");
 
-  const out = generateLocalExplanation(code, "java");
+  const out = await generateLocalExplanation(code, "java");
 
   assert.match(lineOf(out, 4), /the `x` list/);
   assert.match(lineOf(out, 9), /number stored in `x`/);
 });
 
-test("Go: same variable name in two different functions doesn't cross-contaminate", () => {
+test("Go: same variable name in two different functions doesn't cross-contaminate", async () => {
   const code = [
     "package main",
     "func first() {",
@@ -243,13 +243,13 @@ test("Go: same variable name in two different functions doesn't cross-contaminat
     "}",
   ].join("\n");
 
-  const out = generateLocalExplanation(code, "go");
+  const out = await generateLocalExplanation(code, "go");
 
   assert.match(lineOf(out, 4), /the `x` list/);
   assert.match(lineOf(out, 9), /number stored in `x`/);
 });
 
-test("Snippets longer than the line cap don't crash and summarize the rest", () => {
+test("Snippets longer than the line cap don't crash and summarize the rest", async () => {
   const lines = ["def outer():"];
   for (let i = 0; i < 45; i++) lines.push(`    y${i} = ${i}`);
   lines.push("def another():");
@@ -258,8 +258,12 @@ test("Snippets longer than the line cap don't crash and summarize the rest", () 
   lines.push("            print(i)");
   const code = lines.join("\n");
 
-  assert.doesNotThrow(() => generateLocalExplanation(code, "python"));
-  const out = generateLocalExplanation(code, "python");
+  // (previously wrapped in assert.doesNotThrow — redundant now that
+  // this is awaited directly below: an async test throws/rejects on
+  // its own if generateLocalExplanation errors, no separate check
+  // needed, and doesNotThrow can't meaningfully wrap an async call
+  // anyway.)
+  const out = await generateLocalExplanation(code, "python");
   assert.match(out, /more lines not shown individually/);
   assert.match(out, /`another`/);
 });

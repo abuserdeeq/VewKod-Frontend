@@ -6,8 +6,8 @@ function lineByLine(explanation) {
   return explanation.split("## Line-by-Line Explanation")[1].split("## Key Concepts")[0];
 }
 
-test("Kotlin: explains a bare function call, try, and catch (previously all fell to the generic fallback)", () => {
-  const out = lineByLine(generateLocalExplanation(
+test("Kotlin: explains a bare function call, try, and catch (previously all fell to the generic fallback)", async () => {
+  const out = lineByLine(await generateLocalExplanation(
     'fun main() {\n    try {\n        greet(users)\n    } catch (e: Exception) {\n        println(e.message)\n    }\n}',
     "kotlin"
   ));
@@ -16,8 +16,8 @@ test("Kotlin: explains a bare function call, try, and catch (previously all fell
   assert.match(out, /Catches an exception\/error here \(`e: Exception`\)/);
 });
 
-test("Java: explains try/finally and a no-argument call", () => {
-  const out = lineByLine(generateLocalExplanation(
+test("Java: explains try/finally and a no-argument call", async () => {
+  const out = lineByLine(await generateLocalExplanation(
     'void run() {\n    try {\n        cleanup();\n    } finally {\n        done();\n    }\n}',
     "java"
   ));
@@ -26,8 +26,8 @@ test("Java: explains try/finally and a no-argument call", () => {
   assert.match(out, /Starts a `finally` block/);
 });
 
-test("C++: explains a catch-all `catch (...)` and a function definition header", () => {
-  const out = lineByLine(generateLocalExplanation(
+test("C++: explains a catch-all `catch (...)` and a function definition header", async () => {
+  const out = lineByLine(await generateLocalExplanation(
     'void run() {\n    try {\n        load();\n    } catch (...) {\n        fail();\n    }\n}',
     "cpp"
   ));
@@ -35,16 +35,16 @@ test("C++: explains a catch-all `catch (...)` and a function definition header",
   assert.match(out, /catch-all handler/);
 });
 
-test("C++: recognizes std::cerr the same way it already recognizes std::cout", () => {
-  const out = lineByLine(generateLocalExplanation(
+test("C++: recognizes std::cerr the same way it already recognizes std::cout", async () => {
+  const out = lineByLine(await generateLocalExplanation(
     'void warn() {\n    std::cerr << "oops";\n}',
     "cpp"
   ));
   assert.match(out, /standard error/);
 });
 
-test("Bash: explains a paren-less function/command call (backup_files, notify_admin \"done\")", () => {
-  const out = lineByLine(generateLocalExplanation(
+test("Bash: explains a paren-less function/command call (backup_files, notify_admin \"done\")", async () => {
+  const out = lineByLine(await generateLocalExplanation(
     '#!/bin/bash\nbackup_files\nnotify_admin "done"\n',
     "bash"
   ));
@@ -52,16 +52,16 @@ test("Bash: explains a paren-less function/command call (backup_files, notify_ad
   assert.match(out, /Runs the `notify_admin` command, passing `"done"`\./);
 });
 
-test("Bash: a defined function is called out as 'the X function', not 'command'", () => {
-  const out = lineByLine(generateLocalExplanation(
+test("Bash: a defined function is called out as 'the X function', not 'command'", async () => {
+  const out = lineByLine(await generateLocalExplanation(
     'cleanup() {\n    echo "done"\n}\ncleanup\n',
     "bash"
   ));
   assert.match(out, /Runs the `cleanup` function\./);
 });
 
-test("Go: a call that passes a known variable names that variable specifically", () => {
-  const out = lineByLine(generateLocalExplanation(
+test("Go: a call that passes a known variable names that variable specifically", async () => {
+  const out = lineByLine(await generateLocalExplanation(
     'func main() {\n    users := fetchUsers()\n    printReport(users)\n}',
     "go"
   ));
