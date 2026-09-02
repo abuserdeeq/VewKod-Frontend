@@ -18,6 +18,7 @@
 // instead of the regex-based one.
 
 import Parser from "web-tree-sitter";
+import { findCommonIssues } from "../shared/patterns.js";
 
 export const id = "python";
 export const label = "Python";
@@ -358,7 +359,12 @@ function updateStructure(node, structure) {
     structure.comments.push(lineNumber);
   } else if (node.type === "function_definition") {
     const nameNode = node.childForFieldName("name");
-    structure.functions.push({ line: lineNumber, name: nameNode ? nameNode.text : "?" });
+    const paramsNode = node.childForFieldName("parameters");
+    structure.functions.push({
+      line: lineNumber,
+      name: nameNode ? nameNode.text : "?",
+      parameters: paramsNode ? paramsNode.text.slice(1, -1).trim() : "",
+    });
   } else if (node.type === "class_definition") {
     const nameNode = node.childForFieldName("name");
     structure.classes.push({ line: lineNumber, name: nameNode ? nameNode.text : "?" });
@@ -381,6 +387,18 @@ function updateStructure(node, structure) {
 // Single entry point — one parse, everything derived from it
 // ------------------------------------------------------------
 
+// These two checks already exist inside findCommonIssues() (added
+// earlier this session, shared across all regex-based languages) —
+// but Python's own AST-based versions below are strictly more
+// reliable (real block/scope boundaries instead of indentation
+// guessing or same-line/two-line lookahead). Filtering these two
+// specific messages out of the shared results before merging avoids
+// showing the same issue twice, once from each source.
+const SUPERSEDED_MESSAGES = new Set([
+  "This error handler is empty — the exception is silently swallowed. Consider at least logging it, even if no other action is needed.",
+  "This line comes right after a `return` in the same block, so it can never be reached.",
+]);
+
 /**
  * Parses the source once and returns everything engineRunner.js
  * needs to build the full explanation: structure (for Overview /
@@ -399,11 +417,26 @@ export async function analyzeAst(code) {
     functions: [], classes: [], imports: [], variables: [],
     loops: [], conditionals: [], returns: [], outputs: [], comments: [],
   };
-  const issues = [];
+  // Text-pattern checks (TODO/FIXME, hard-coded secrets, eval(),
+  // division-by-zero, SQL injection, 0.0.0.0 bind, etc.) — the same
+  // shared checks every regex-based language analyzer already gets.
+  // These are inherently textual/heuristic, so there's no AST-based
+  // improvement to make here; reusing the existing shared function
+  // avoids re-implementing ~8 checks and keeps Python in parity with
+  // the other 13 languages instead of silently losing them when it
+  // switched to AST-based analysis. The two checks Python now does
+  // better via AST are filtered out here so they don't also show up
+  // via the regex version below.
+  const issues = findCommonIssues(code.split("\n")).filter(
+    (issue) => !SUPERSEDED_MESSAGES.has(issue.message)
+  );
   const lineExplanations = [];
 
   function walk(node) {
     updateStructure(node, structure);
+    // AST-based checks — genuinely more reliable than regex/
+    // indentation guessing for these two specifically (this is what
+    // the whole Tree-sitter migration originally set out to fix).
     checkIssues(node, issues);
 
     const explanation = explainNode(node);
