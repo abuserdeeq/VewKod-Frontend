@@ -1,17 +1,28 @@
-import { isCommentLine, commentExplanation, findCommonIssues, countUsages, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement, explainTernary, explainClassicForLoop, mdCode , explainBareFunctionCall , explainLoneOpenBrace } from "../shared/patterns.js";
+// ============================================================
+// JavaScript analyzer — Tree-sitter (AST) based
+// ============================================================
+// Same architecture as python.js: single async analyzeAst(code)
+// entry point, one parse producing structure + issues + per-line
+// explanations together, per-function symbol tracking instead of a
+// full symbol table, and the shared regex-based findCommonIssues()
+// reused for text-pattern checks (TODO, secrets, eval, etc.) with
+// the two AST-superseded checks (empty handler, unreachable) filtered
+// out to avoid double-reporting.
+
+import Parser from "web-tree-sitter";
+import { findCommonIssues, mdCode } from "../shared/patterns.js";
 
 export const id = "javascript";
 export const label = "JavaScript";
 
-// Function-level scoping (see shared/patterns.js computeLineScopes):
-// JS/TS-family blocks are brace-delimited. Matches both
-// `function name(...)` and `const name = (...) =>` function starts;
-// when the arrow form matches, the name lands in group 2 instead of
-// group 1 — computeLineScopes falls back to a generic scope label in
-// that case, which is fine since only uniqueness (via line index)
-// matters for isolating one function's variables from another's.
-export const scopeStyle = "brace";
-export const functionStartRegex = /^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(|^(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\(/;
+const isNode = typeof process !== "undefined" && !!process.versions?.node;
+
+const WASM_CORE_PATH = isNode
+  ? "./node_modules/web-tree-sitter/tree-sitter.wasm"
+  : "/wasm/tree-sitter.wasm";
+const WASM_JS_PATH = isNode
+  ? "./node_modules/tree-sitter-wasms/out/tree-sitter-javascript.wasm"
+  : "/wasm/tree-sitter-javascript.wasm";
 
 export function detect(code) {
   return (
@@ -20,369 +31,586 @@ export function detect(code) {
   );
 }
 
-function literalRole(value) {
-  const v = value.trim().replace(/;$/, "");
-  if (/^\[.*\]$/s.test(v)) return "list";
-  if (/^\{.*\}$/s.test(v)) return "dict";
-  if (/^["'`].*["'`]$/.test(v)) return "string";
-  if (/^(true|false)$/.test(v)) return "boolean";
-  if (/^-?\d+(\.\d+)?$/.test(v)) return "number";
-  if (/^new\s+Map\s*\(/.test(v)) return "dict";
-  if (/^new\s+Set\s*\(/.test(v)) return "set";
-  return "variable";
+let JSLang = null;
+let ready = false;
+
+async function ensureReady() {
+  if (ready) return;
+  await Parser.init(isNode ? undefined : { locateFile: () => WASM_CORE_PATH });
+  JSLang = await Parser.Language.load(WASM_JS_PATH);
+  ready = true;
 }
 
-export function buildSymbolTable(lines, symbolTable, lineScopes = []) {
-  lines.forEach((rawLine, index) => {
-    const line = rawLine.trim();
-    if (!line || isCommentLine(line)) return;
-
-    const scope = lineScopes[index] || "global";
-
-    const fn = line.match(/^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(([^)]*)\)/);
-    if (fn) {
-      symbolTable.add(fn[1], "function", { parameters: fn[2].trim() }, scope);
-      const fnScope = `${scope}>${fn[1]}#${index}`;
-      fn[2].split(",").map((p) => p.trim().split("=")[0].trim()).filter(Boolean).forEach((p) => symbolTable.add(p, "parameter", {}, fnScope));
-    }
-
-    const arrow = line.match(/^(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\(([^)]*)\)\s*=>/);
-    if (arrow) {
-      symbolTable.add(arrow[1], "function", { parameters: arrow[2].trim() }, scope);
-      const fnScope = `${scope}>fn#${index}`; // matches computeLineScopes' fallback label for the arrow form
-      arrow[2].split(",").map((p) => p.trim().split("=")[0].trim()).filter(Boolean).forEach((p) => symbolTable.add(p, "parameter", {}, fnScope));
-    }
-
-    const cls = line.match(/\bclass\s+([A-Za-z_$][\w$]*)/);
-    if (cls) symbolTable.add(cls[1], "class", {}, scope);
-
-    // for...of / for...in
-    const forOf = line.match(/^for\s*\(\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s+of\s+([A-Za-z_$][\w$.]*)\s*\)/);
-    if (forOf) {
-      const sourceName = forOf[2].split(".")[0];
-      const sourceInfo = symbolTable.get(sourceName, scope);
-      symbolTable.add(forOf[1], "loop-item", { of: sourceName, ofType: sourceInfo ? sourceInfo.role : "collection" }, scope);
-    }
-
-    // array.forEach((item) => ...) or (item, index) => ...
-    const forEach = line.match(/([A-Za-z_$][\w$]*)\.forEach\s*\(\s*(?:\(([^)]*)\)|([A-Za-z_$][\w$]*))\s*=>/);
-    if (forEach) {
-      const sourceName = forEach[1];
-      const sourceInfo = symbolTable.get(sourceName, scope);
-      const params = (forEach[2] ?? forEach[3] ?? "").split(",").map((p) => p.trim()).filter(Boolean);
-      if (params[0]) symbolTable.add(params[0], "loop-item", { of: sourceName, ofType: sourceInfo ? sourceInfo.role : "array" }, scope);
-    }
-
-    const assign = line.match(/^(?:export\s+)?(const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(.+?);?$/);
-    if (assign) {
-      symbolTable.add(assign[2], literalRole(assign[3]), { keyword: assign[1] }, scope);
-    }
-  });
-
-  return symbolTable;
+function lineOf(node) {
+  return node.startPosition.row + 1;
 }
 
-export function analyzeStructure(lines) {
-  const result = {
-    functions: [], classes: [], imports: [], variables: [],
-    loops: [], conditionals: [], returns: [], outputs: [], comments: [],
-  };
-
-  lines.forEach((rawLine, index) => {
-    const lineNumber = index + 1;
-    const line = rawLine.trim();
-    if (!line) return;
-
-    if (isCommentLine(line)) result.comments.push(lineNumber);
-
-    const fn = line.match(/^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(([^)]*)\)/);
-    if (fn) result.functions.push({ line: lineNumber, name: fn[1], parameters: fn[2] });
-
-    const arrow = line.match(/^(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\(([^)]*)\)\s*=>/);
-    if (arrow) result.functions.push({ line: lineNumber, name: arrow[1], parameters: arrow[2] });
-
-    const cls = line.match(/\bclass\s+([A-Za-z_$][\w$]*)/);
-    if (cls) result.classes.push({ line: lineNumber, name: cls[1] });
-
-    if (/^import\b/.test(line) || /\brequire\s*\(/.test(line)) result.imports.push(lineNumber);
-
-    const varMatch = line.match(/^(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/);
-    if (varMatch) result.variables.push({ line: lineNumber, name: varMatch[1] });
-
-    if (/^(for|while)\b/.test(line) || /\bforEach\s*\(/.test(line)) result.loops.push(lineNumber);
-    if (/^if\s*\(/.test(line) || /^(else|switch|case)\b/.test(line)) result.conditionals.push(lineNumber);
-    if (/^return\b/.test(line)) result.returns.push(lineNumber);
-    if (/\bconsole\.(log|error|warn|info|debug)\s*\(/.test(line)) result.outputs.push(lineNumber);
-  });
-
-  return result;
+// Any child (named or not) whose literal text matches — used for
+// checking for keywords like "of"/"in"/"static"/"get"/"set" that are
+// unnamed tokens in the grammar rather than fields.
+function hasChildText(node, text) {
+  return node.children.some((c) => c.text === text);
 }
 
-export function explainLine(rawLine, symbolTable, scope = "global") {
-  const trimmed = rawLine.trim();
-  if (!trimmed) return null;
-  if (isCommentLine(trimmed)) return commentExplanation();
-
-  const loneBrace = explainLoneOpenBrace(trimmed);
-  if (loneBrace) return loneBrace;
-
-  if (/^import\b/.test(trimmed) || /\brequire\s*\(/.test(trimmed)) {
-    return "Imports a library, module, or dependency so functionality from another file/package can be used.";
-  }
-
-  const fn = trimmed.match(/^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(([^)]*)\)/);
-  if (fn) {
-    const params = fn[2].trim();
-    return params
-      ? `Defines the function \`${fn[1]}\`, which accepts \`${params}\` as parameter(s).`
-      : `Defines the function \`${fn[1]}\` without parameters.`;
-  }
-
-  const arrow = trimmed.match(/^(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\(([^)]*)\)|([A-Za-z_$][\w$]*))\s*=>/);
-  if (arrow) {
-    const params = (arrow[2] ?? arrow[3] ?? "").trim();
-    return params
-      ? `Defines the arrow function \`${arrow[1]}\`, which accepts \`${params}\` as parameter(s).`
-      : `Defines the arrow function \`${arrow[1]}\`.`;
-  }
-
-  const cls = trimmed.match(/^class\s+([A-Za-z_$][\w$]*)(?:\s+extends\s+([A-Za-z_$][\w$.]*))?/);
-  if (cls) {
-    const [, name, base] = cls;
-    return base
-      ? `Defines the class \`${name}\`, which extends \`${base}\` (inherits its properties and methods).`
-      : `Defines the class \`${name}\`, which can serve as a blueprint for creating objects.`;
-  }
-
-  const forOf = trimmed.match(/^for\s*\(\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s+of\s+([A-Za-z_$][\w$.]*)\s*\)/);
-  if (forOf) {
-    const sourceName = forOf[2].split(".")[0];
-    const info = symbolTable.get(sourceName, scope);
-    const phrase = info && info.role === "list" ? `the \`${sourceName}\` array` : `\`${sourceName}\``;
-    return `Iterates over ${phrase}; on each pass, \`${forOf[1]}\` represents the current item.`;
-  }
-
-  const forEach = trimmed.match(/([A-Za-z_$][\w$]*)\.forEach\s*\(\s*(?:\(([^)]*)\)|([A-Za-z_$][\w$]*))\s*=>/);
-  if (forEach) {
-    const params = (forEach[2] ?? forEach[3] ?? "").split(",").map((p) => p.trim());
-    const info = symbolTable.get(forEach[1], scope);
-    const phrase = info && info.role === "list" ? `the \`${forEach[1]}\` array` : `\`${forEach[1]}\``;
-    return `Loops over ${phrase} using \`.forEach()\`; \`${params[0]}\` represents the current item on each pass.`;
-  }
-
-  if (/^for\s*\(/.test(trimmed)) {
-    const classicFor = explainClassicForLoop(trimmed);
-    if (classicFor) return classicFor;
-    return "Starts a counted loop that repeats a block of code a set number of times.";
-  }
-  if (/^while\s*\(\s*true\s*\)/.test(trimmed)) {
-    return "Starts an intentionally infinite loop, which must be exited with a `break` or `return` elsewhere.";
-  }
-  if (/^while\s*\(/.test(trimmed)) {
-    return "Starts a while loop that keeps running while its condition stays true.";
-  }
-
-  const ifMatch = trimmed.match(/^if\s*\((.+)\)\s*\{?$/);
-  if (ifMatch) {
-    const condition = ifMatch[1].trim();
-    const known = symbolTable.knownIdentifiersIn(condition, scope);
-    if (known.length === 1 && condition === known[0]) {
-      return `Checks whether ${symbolTable.describe(known[0], scope)} is truthy before running the code that follows.`;
-    }
-    return `Checks whether ${mdCode(condition)} is true before running the code that follows.`;
-  }
-  if (/^\}?\s*else\s+if\s*\(/.test(trimmed)) return "Checks another condition when the previous one was not met.";
-  if (/^\}?\s*else\b/.test(trimmed)) return "Defines the alternative block that runs when the previous condition is false.";
-  if (/^switch\s*\(/.test(trimmed)) return "Starts a switch statement that selects a block of code based on a value.";
-  if (/^case\s+/.test(trimmed)) return "Defines one possible case inside a switch statement.";
-
-  if (/^try\s*\{?$/.test(trimmed)) {
-    return "Starts a `try` block; if an error occurs anywhere inside it, execution jumps to the matching `catch` block below.";
-  }
-
-  const catchMatch = trimmed.match(/^\}?\s*catch\s*(?:\(([^)]*)\))?\s*\{?$/);
-  if (catchMatch) {
-    const errName = (catchMatch[1] || "").trim();
-    return errName
-      ? `Catches any error thrown in the \`try\` block above, made available here as \`${errName}\`.`
-      : "Catches any error thrown in the `try` block above.";
-  }
-
-  if (/^\}?\s*finally\s*\{?$/.test(trimmed)) {
-    return "Starts a `finally` block, which always runs after the `try`/`catch`, whether or not an error occurred.";
-  }
-
-  const throwMatch = trimmed.match(/^throw\s+(.+?);?$/);
-  if (throwMatch) {
-    return `Throws an error (${mdCode(throwMatch[1].trim())}), stopping normal execution here so it can be caught by an enclosing \`try\`/\`catch\`.`;
-  }
-
-  const ret = trimmed.match(/^return\b\s*(.*?);?$/);
-  if (ret) {
-    const value = ret[1].trim();
-    if (!value) return "Returns control from the current function without a value.";
-    const known = symbolTable.knownIdentifiersIn(value, scope);
-    if (known.length === 1 && value === known[0]) return `Returns ${symbolTable.describe(known[0], scope)} from the current function.`;
-    return `Returns ${mdCode(value)} from the current function.`;
-  }
-
-  const log = trimmed.match(/\bconsole\.(log|error|warn|info|debug)\s*\((.*)\)\s*;?$/);
-  if (log) {
-    const [, method, argsRaw] = log;
-    const arg = argsRaw.trim();
-    const known = symbolTable.knownIdentifiersIn(arg, scope);
-    const argPhrase = known.length === 1 && arg === known[0]
-      ? symbolTable.describe(known[0], scope)
-      : (arg ? mdCode(arg) : null);
-
-    if (method === "log") {
-      return argPhrase ? `Displays ${argPhrase} in the browser/console.` : "Prints a blank line to the console.";
-    }
-    const verb = {
-      error: "Logs an error",
-      warn: "Logs a warning",
-      info: "Logs an informational message",
-      debug: "Logs a debug message",
-    }[method];
-    return argPhrase ? `${verb} (${argPhrase}) to the console.` : `${verb} to the console.`;
-  }
-
-  const incDec = explainIncrementDecrement(trimmed);
-  if (incDec) return incDec;
-
-  const augmented = explainAugmentedAssignment(trimmed, symbolTable, scope);
-  if (augmented) return augmented;
-
-  const destructure = trimmed.match(/^(?:export\s+)?(const|let|var)\s*(\{[^}]*\}|\[[^\]]*\])\s*=\s*(.+?);?$/);
-  if (destructure) {
-    const [, keyword, pattern, value] = destructure;
-    const isObject = pattern.startsWith("{");
-    const names = pattern
-      .slice(1, -1)
-      .split(",")
-      .map((p) => p.trim().split(":").pop().replace(/\.\.\./, "").trim())
-      .filter(Boolean);
-    const nameList = names.map((n) => `\`${n}\``).join(", ");
-    return isObject
-      ? `Destructures ${mdCode(value)}, pulling out the ${nameList} propert${names.length === 1 ? "y" : "ies"} into new \`${keyword}\` variable(s).`
-      : `Destructures ${mdCode(value)} by position into new \`${keyword}\` variable(s): ${nameList}.`;
-  }
-
-  const declared = trimmed.match(/^(?:export\s+)?(const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(.+?);?$/);
-  if (declared) {
-    const [, keyword, name, value] = declared;
-    const info = symbolTable.get(name, scope);
-
-    const ternary = explainTernary(name, value);
-    if (ternary) return ternary;
-
-    if (info && info.role === "list") return `Creates the \`${keyword}\` array \`${name}\` containing ${mdCode(value)}.`;
-    if (info && info.role === "dict") return `Creates the \`${keyword}\` object \`${name}\` with the properties ${mdCode(value)}.`;
-    return `Declares the \`${keyword}\` variable \`${name}\` and assigns it ${mdCode(value)}.`;
-  }
-
-  const methodDef = trimmed.match(/^(static\s+|async\s+|get\s+|set\s+)*([A-Za-z_$][\w$]*)\s*\(([^)]*)\)\s*\{$/);
-  if (methodDef) {
-    const [, modifiers, name, params] = methodDef;
-    const paramsTrim = params.trim();
-    const mods = (modifiers || "").trim();
-
-    if (name === "constructor") {
-      return paramsTrim
-        ? `Defines the constructor for this class, which accepts \`${paramsTrim}\` as parameter(s) and runs when a new instance is created.`
-        : "Defines the constructor for this class, which runs when a new instance is created.";
-    }
-
-    const kind = mods.includes("get") ? "getter" : mods.includes("set") ? "setter" : "method";
-    const staticNote = mods.includes("static") ? " (a static method, called on the class itself rather than an instance)" : "";
-    return paramsTrim
-      ? `Defines the \`${name}\` ${kind}${staticNote}, which accepts \`${paramsTrim}\` as parameter(s).`
-      : `Defines the \`${name}\` ${kind}${staticNote}.`;
-  }
-
-  const call = trimmed.match(/^([A-Za-z_$][\w$]*)\s*\((.*)\)\s*;?$/);
-  if (call) {
-    if (call[1] === "super") {
-      return call[2].trim()
-        ? `Calls the parent class's constructor via \`super()\`, passing ${mdCode(call[2].trim())}.`
-        : "Calls the parent class's constructor via `super()`.";
-    }
-    const info = symbolTable.get(call[1], scope);
-    const label = info && info.role === "function" ? `the \`${call[1]}()\` function defined above` : `\`${call[1]}()\``;
-    return call[2].trim() ? `Calls ${label} with the provided argument(s).` : `Calls ${label} without arguments.`;
-  }
-
-  if (["}", "};", ")", "];"].includes(trimmed)) return "Closes the current code block or structural section.";
-
-  const propAssign = trimmed.match(/^([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\[[^\]]*\]|\([^)]*\))*)\s*=(?!=)\s*(.+?);?$/);
-  if (propAssign) {
-    const [, target, value] = propAssign;
-    if (/\.(innerHTML|outerHTML)$/.test(target)) {
-      return `Replaces the HTML content of the selected element with ${mdCode(value)}. If that value can come from user input, this is an XSS injection risk (see Potential Issues below).`;
-    }
-    return `Sets \`${target}\` to ${mdCode(value)}.`;
-  }
-
-  const bareCall = explainBareFunctionCall(trimmed, symbolTable, scope);
-  if (bareCall) return bareCall;
-
-  return genericFallbackExplanation();
+function declarationKind(node) {
+  // variable_declaration's first child is the "const"/"let"/"var"
+  // keyword token itself (unnamed, so not reachable via a field).
+  return node.child(0)?.text || "let";
 }
 
-export function findIssues(lines, symbolTable) {
-  const issues = findCommonIssues(lines);
+// ------------------------------------------------------------
+// Per-function symbol tracking (list/dict/string/number/loop-item/
+// function) — same limited-but-useful approach as python.js.
+// ------------------------------------------------------------
 
-  lines.forEach((rawLine, index) => {
-    const lineNumber = index + 1;
-    const line = rawLine.trim();
-    if (!line) return;
+function roleFromValueNode(valueNode) {
+  if (!valueNode) return null;
+  if (valueNode.type === "array") return "list";
+  if (valueNode.type === "object") return "dict";
+  if (valueNode.type === "string" || valueNode.type === "template_string") return "string";
+  if (valueNode.type === "number") return "number";
+  if (valueNode.type === "true" || valueNode.type === "false") return "boolean";
+  if (valueNode.type === "arrow_function" || valueNode.type === "function") return "function";
+  if (valueNode.type === "new_expression") {
+    const ctorName = valueNode.childForFieldName("constructor")?.text;
+    if (ctorName === "Map") return "dict";
+    if (ctorName === "Set") return "set";
+  }
+  return null;
+}
 
-    // innerHTML/outerHTML assignment where the right-hand side isn't a
-    // fixed string literal — a classic DOM-based XSS pattern, since
-    // whatever value flows in is parsed and executed as HTML/JS.
-    const htmlSink = line.match(/\.(innerHTML|outerHTML)\s*=\s*(.+?);?$/);
-    if (htmlSink && !/^["'`].*["'`]$/.test(htmlSink[2].trim())) {
+function buildSymbols(scopeNode) {
+  const symbols = new Map();
+  function scan(node) {
+    if (node.type === "variable_declarator") {
+      const name = node.childForFieldName("name");
+      const value = node.childForFieldName("value");
+      if (name && name.type === "identifier") {
+        const role = roleFromValueNode(value);
+        if (role) symbols.set(name.text, role);
+      }
+    }
+    if (node.type === "function_declaration") {
+      const name = node.childForFieldName("name");
+      if (name) symbols.set(name.text, "function");
+    }
+    if (node.type === "for_in_statement" && hasChildText(node, "of")) {
+      const left = node.childForFieldName("left");
+      // `left` may be a bare identifier or a variable_declarator
+      // wrapping one (`for (const item of x)`).
+      const target = left && left.type === "variable_declarator" ? left.childForFieldName("name") : left;
+      if (target && target.type === "identifier") symbols.set(target.text, "loop-item");
+    }
+    // array.forEach((item) => ...)
+    if (node.type === "call_expression") {
+      const fn = node.childForFieldName("function");
+      if (fn && fn.type === "member_expression" && fn.childForFieldName("property")?.text === "forEach") {
+        const argsNode = node.childForFieldName("arguments");
+        const cb = argsNode ? argsNode.namedChildren[0] : null;
+        if (cb && (cb.type === "arrow_function" || cb.type === "function")) {
+          const params = cb.childForFieldName("parameters") || cb.childForFieldName("parameter");
+          const firstParam = params && params.namedChildren ? params.namedChildren[0] : params;
+          if (firstParam && firstParam.type === "identifier") symbols.set(firstParam.text, "loop-item");
+        }
+      }
+    }
+    for (const child of node.namedChildren) scan(child);
+  }
+  if (scopeNode) scan(scopeNode);
+  return symbols;
+}
+
+// ------------------------------------------------------------
+// Per-line explanation
+// ------------------------------------------------------------
+
+function explainNode(node, symbols) {
+  switch (node.type) {
+    case "import_statement":
+      return "Imports a library, module, or dependency so functionality from another file/package can be used.";
+
+    case "function_declaration": {
+      const nameNode = node.childForFieldName("name");
+      const paramsNode = node.childForFieldName("parameters");
+      const params = paramsNode ? paramsNode.text.slice(1, -1).trim() : "";
+      const name = nameNode ? nameNode.text : "?";
+      return params
+        ? `Defines the function \`${name}\`, which accepts \`${params}\` as parameter(s).`
+        : `Defines the function \`${name}\` without parameters.`;
+    }
+
+    case "variable_declaration": {
+      const declarator = node.namedChildren.find((c) => c.type === "variable_declarator");
+      if (!declarator) return null;
+      const keyword = declarationKind(node);
+      const name = declarator.childForFieldName("name");
+      const value = declarator.childForFieldName("value");
+
+      // Arrow/anonymous function assigned to a variable.
+      if (value && (value.type === "arrow_function" || value.type === "function")) {
+        const paramsNode = value.childForFieldName("parameters") || value.childForFieldName("parameter");
+        const params = paramsNode ? (paramsNode.namedChildren ? paramsNode.namedChildren.map((p) => p.text).join(", ") : paramsNode.text) : "";
+        return params
+          ? `Defines the arrow function \`${name ? name.text : "?"}\`, which accepts \`${params}\` as parameter(s).`
+          : `Defines the arrow function \`${name ? name.text : "?"}\`.`;
+      }
+
+      // Destructuring: name is an object_pattern or array_pattern.
+      if (name && (name.type === "object_pattern" || name.type === "array_pattern")) {
+        const isObject = name.type === "object_pattern";
+        const names = name.namedChildren.map((c) => (c.type === "shorthand_property_identifier_pattern" ? c.text : c.text)).join(", ");
+        return isObject
+          ? `Destructures ${mdCode(value ? value.text : "?")}, pulling out the ${names} propert${name.namedChildren.length === 1 ? "y" : "ies"} into new \`${keyword}\` variable(s).`
+          : `Destructures ${mdCode(value ? value.text : "?")} by position into new \`${keyword}\` variable(s): ${names}.`;
+      }
+
+      if (!name || name.type !== "identifier") return null;
+
+      if (value && value.type === "array") {
+        const items = value.namedChildren.map((c) => c.text).join(", ");
+        return `Creates the \`${keyword}\` array \`${name.text}\`${items ? ` containing ${mdCode(items)}` : " (empty)"}.`;
+      }
+      if (value && value.type === "object") {
+        return `Creates the \`${keyword}\` object \`${name.text}\` with the properties ${mdCode(value.text)}.`;
+      }
+      return `Declares the \`${keyword}\` variable \`${name.text}\`${value ? ` and assigns it ${mdCode(value.text)}` : ""}.`;
+    }
+
+    case "class_declaration": {
+      const nameNode = node.childForFieldName("name");
+      const heritage = node.namedChildren.find((c) => c.type === "class_heritage");
+      const base = heritage ? heritage.namedChildren[0]?.text : null;
+      const name = nameNode ? nameNode.text : "?";
+      return base
+        ? `Defines the class \`${name}\`, which extends \`${base}\` (inherits its properties and methods).`
+        : `Defines the class \`${name}\`, which can serve as a blueprint for creating objects.`;
+    }
+
+    case "method_definition": {
+      const nameNode = node.childForFieldName("name");
+      const paramsNode = node.childForFieldName("parameters");
+      const params = paramsNode ? paramsNode.text.slice(1, -1).trim() : "";
+      const name = nameNode ? nameNode.text : "?";
+
+      if (name === "constructor") {
+        return params
+          ? `Defines the constructor for this class, which accepts \`${params}\` as parameter(s) and runs when a new instance is created.`
+          : "Defines the constructor for this class, which runs when a new instance is created.";
+      }
+
+      const isStatic = hasChildText(node, "static");
+      const isGet = hasChildText(node, "get");
+      const isSet = hasChildText(node, "set");
+      const kind = isGet ? "getter" : isSet ? "setter" : "method";
+      const staticNote = isStatic ? " (a static method, called on the class itself rather than an instance)" : "";
+      return params
+        ? `Defines the \`${name}\` ${kind}${staticNote}, which accepts \`${params}\` as parameter(s).`
+        : `Defines the \`${name}\` ${kind}${staticNote}.`;
+    }
+
+    case "for_in_statement": {
+      const isOf = hasChildText(node, "of");
+      const left = node.childForFieldName("left");
+      const right = node.childForFieldName("right");
+      const target = left && left.type === "variable_declarator" ? left.childForFieldName("name") : left;
+      const targetText = target ? target.text : "?";
+      if (isOf) {
+        const sourceText = right ? right.text : "?";
+        const role = right && right.type === "identifier" ? symbols.get(right.text) : null;
+        const phrase = role === "list" ? `the ${mdCode(sourceText)} array` : mdCode(sourceText);
+        return `Iterates over ${phrase}; on each pass, ${mdCode(targetText)} represents the current item.`;
+      }
+      return `Iterates over the enumerable property names of ${mdCode(right ? right.text : "?")}; on each pass, ${mdCode(targetText)} holds the current key.`;
+    }
+
+    case "for_statement":
+      return "Starts a counted loop that repeats a block of code a set number of times.";
+
+    case "while_statement": {
+      const condition = node.childForFieldName("condition");
+      if (condition && condition.text === "true") {
+        return "Starts an intentionally infinite loop, which must be exited with a `break` or `return` elsewhere.";
+      }
+      return "Starts a while loop that keeps running while its condition stays true.";
+    }
+
+    case "do_statement":
+      return "Starts a do/while loop, which always runs its body at least once before checking the condition.";
+
+    case "if_statement": {
+      const condition = node.childForFieldName("condition");
+      const conditionText = condition ? condition.text.replace(/^\(|\)$/g, "") : "?";
+      const isElseIf = node.parent && node.parent.type === "if_statement" && node.parent.childForFieldName("alternative") === node;
+      if (isElseIf) {
+        return `Checks another condition (${mdCode(conditionText)}) when the previous one was not met.`;
+      }
+      if (condition && condition.namedChildren[0]?.type === "identifier") {
+        const role = symbols.get(condition.namedChildren[0].text);
+        if (role === "number") {
+          return `Checks whether the number stored in ${mdCode(condition.namedChildren[0].text)} is truthy before running the code that follows.`;
+        }
+        if (role === "loop-item") {
+          return `Checks whether the current item (${mdCode(condition.namedChildren[0].text)}) is truthy before running the code that follows.`;
+        }
+      }
+      return `Checks whether ${mdCode(conditionText)} is true before running the code that follows.`;
+    }
+
+    case "switch_statement": {
+      const value = node.childForFieldName("value");
+      return `Starts a switch statement that selects a block of code based on the value of ${mdCode(value ? value.text : "?")}.`;
+    }
+
+    case "switch_case": {
+      const value = node.childForFieldName("value");
+      return `Defines one possible case (${mdCode(value ? value.text : "?")}) inside a switch statement.`;
+    }
+
+    case "switch_default":
+      return "Defines the fallback case inside a switch statement, used when none of the other cases match.";
+
+    case "try_statement":
+      return "Starts a `try` block; if an error occurs anywhere inside it, execution jumps to the matching `catch` block below.";
+
+    case "catch_clause": {
+      const param = node.childForFieldName("parameter");
+      const errName = param ? param.text : null;
+      return errName
+        ? `Catches any error thrown in the \`try\` block above, made available here as \`${errName}\`.`
+        : "Catches any error thrown in the `try` block above.";
+    }
+
+    case "statement_block": {
+      const parent = node.parent;
+      if (parent && parent.type === "if_statement" && parent.childForFieldName("alternative") === node) {
+        return "Defines the alternative block that runs when the previous condition is false.";
+      }
+      if (parent && parent.type === "try_statement" && parent.childForFieldName("finalizer") === node) {
+        return "Starts a `finally` block, which always runs after the `try`/`catch`, whether or not an error occurred.";
+      }
+      return null;
+    }
+
+    case "throw_statement": {
+      const value = node.namedChildren[0];
+      return `Throws an error (${mdCode(value ? value.text : "?")}), stopping normal execution here so it can be caught by an enclosing \`try\`/\`catch\`.`;
+    }
+
+    case "return_statement": {
+      const value = node.namedChildren[0];
+      return value
+        ? `Returns ${mdCode(value.text)} from the current function.`
+        : "Returns control from the current function without a value.";
+    }
+
+    case "update_expression": {
+      const arg = node.namedChildren[0];
+      const isIncrement = node.text.includes("++");
+      return `${isIncrement ? "Increments" : "Decrements"} ${mdCode(arg ? arg.text : "?")} by 1.`;
+    }
+
+    case "expression_statement": {
+      const inner = node.namedChildren[0];
+      if (!inner) return null;
+
+      // console.log/error/warn/info/debug
+      if (inner.type === "call_expression") {
+        const fn = inner.childForFieldName("function");
+        if (fn && fn.type === "member_expression" && fn.childForFieldName("object")?.text === "console") {
+          const method = fn.childForFieldName("property")?.text;
+          const argsNode = inner.childForFieldName("arguments");
+          const arg = argsNode ? argsNode.namedChildren[0] : null;
+          const argText = arg ? mdCode(arg.text) : null;
+          if (method === "log") {
+            return argText ? `Displays ${argText} in the browser/console.` : "Prints a blank line to the console.";
+          }
+          const verb = { error: "Logs an error", warn: "Logs a warning", info: "Logs an informational message", debug: "Logs a debug message" }[method];
+          if (verb) return argText ? `${verb} (${argText}) to the console.` : `${verb} to the console.`;
+        }
+
+        // super(...)
+        if (fn && fn.text === "super") {
+          const argsNode = inner.childForFieldName("arguments");
+          const args = argsNode ? argsNode.text.slice(1, -1).trim() : "";
+          return args
+            ? `Calls the parent class's constructor via \`super()\`, passing ${mdCode(args)}.`
+            : "Calls the parent class's constructor via `super()`.";
+        }
+
+        // obj.method(args)
+        if (fn && fn.type === "member_expression") {
+          const obj = fn.childForFieldName("object");
+          const prop = fn.childForFieldName("property");
+          const argsNode = inner.childForFieldName("arguments");
+          const args = argsNode ? argsNode.text.slice(1, -1).trim() : "";
+          if (obj && prop) {
+            return args
+              ? `Calls \`.${prop.text}(${args})\` on ${mdCode(obj.text)}.`
+              : `Calls \`.${prop.text}()\` on ${mdCode(obj.text)}.`;
+          }
+        }
+
+        // bare functionName(args)
+        if (fn && fn.type === "identifier") {
+          const argsNode = inner.childForFieldName("arguments");
+          const hasArgs = argsNode && argsNode.namedChildCount > 0;
+          const role = symbols.get(fn.text);
+          const label = role === "function" ? `the ${mdCode(fn.text + "()")} function defined above` : mdCode(fn.text + "()");
+          return hasArgs ? `Calls ${label} with the provided argument(s).` : `Calls ${label} without arguments.`;
+        }
+      }
+
+      // Assignment expressions: augmented, increment (handled above via
+      // update_expression), and plain property/variable assignment.
+      if (inner.type === "assignment_expression") {
+        const left = inner.childForFieldName("left");
+        const right = inner.childForFieldName("right");
+        const operator = inner.childForFieldName("operator")?.text || node.children.find((c) => /^[+\-*/%]?=$/.test(c.text))?.text || "=";
+
+        if (operator !== "=") {
+          const opVerbs = {
+            "+=": ["Increases", "by"], "-=": ["Decreases", "by"],
+            "*=": ["Multiplies", "by"], "/=": ["Divides", "by"],
+            "%=": ["Takes the remainder (modulo) of", "by"], "**=": ["Raises", "to the power of"],
+          };
+          const [verb, prep] = opVerbs[operator] || ["Updates", "by"];
+          return `${verb} ${mdCode(left ? left.text : "?")} ${prep} ${mdCode(right ? right.text : "?")}.`;
+        }
+
+        if (left && left.type === "member_expression") {
+          const propName = left.childForFieldName("property")?.text;
+          if (propName === "innerHTML" || propName === "outerHTML") {
+            return `Replaces the HTML content of the selected element with ${mdCode(right ? right.text : "?")}. If that value can come from user input, this is an XSS injection risk (see Potential Issues below).`;
+          }
+          return `Sets ${mdCode(left.text)} to ${mdCode(right ? right.text : "?")}.`;
+        }
+
+        return `Sets ${mdCode(left ? left.text : "?")} to ${mdCode(right ? right.text : "?")}.`;
+      }
+
+      return null;
+    }
+
+    default:
+      return null;
+  }
+}
+
+// ------------------------------------------------------------
+// Issue checks
+// ------------------------------------------------------------
+
+const SUPERSEDED_MESSAGES = new Set([
+  "This error handler is empty — the exception is silently swallowed. Consider at least logging it, even if no other action is needed.",
+  "This line comes right after a `return` in the same block, so it can never be reached.",
+]);
+
+function checkIssues(node, issues) {
+  if (node.type === "catch_clause") {
+    const body = node.childForFieldName("body");
+    if (body && body.namedChildCount === 0) {
       issues.push({
-        line: lineNumber,
-        type: "security",
-        message: `Assigns a non-literal value to \`${htmlSink[1]}\`. If this value can come from user input, it's a DOM-based XSS risk — consider \`textContent\` or a sanitizer instead.`,
+        line: lineOf(node),
+        type: "review",
+        message: "This error handler is empty — the exception is silently swallowed. Consider at least logging it, even if no other action is needed.",
       });
     }
+  }
 
-    if (/\bdocument\.write\s*\(/.test(line)) {
+  if (node.type === "return_statement") {
+    const next = node.nextNamedSibling;
+    if (next && next.type !== "comment") {
       issues.push({
-        line: lineNumber,
+        line: lineOf(next),
+        type: "warning",
+        message: "This line comes right after a `return` in the same block, so it can never be reached.",
+      });
+    }
+  }
+
+  if (node.type === "assignment_expression") {
+    const left = node.childForFieldName("left");
+    const right = node.childForFieldName("right");
+    if (left && left.type === "member_expression") {
+      const propName = left.childForFieldName("property")?.text;
+      if ((propName === "innerHTML" || propName === "outerHTML") && right && !(right.type === "string" || right.type === "template_string")) {
+        issues.push({
+          line: lineOf(node),
+          type: "security",
+          message: `Assigns a non-literal value to \`${propName}\`. If this value can come from user input, it's a DOM-based XSS risk — consider \`textContent\` or a sanitizer instead.`,
+        });
+      }
+    }
+  }
+
+  if (node.type === "call_expression") {
+    const fn = node.childForFieldName("function");
+    if (fn && fn.type === "member_expression" && fn.childForFieldName("object")?.text === "document" && fn.childForFieldName("property")?.text === "write") {
+      issues.push({
+        line: lineOf(node),
         type: "security",
         message: "`document.write()` injects raw markup into the page and is a common XSS vector. Prefer safer DOM APIs like `textContent` or `createElement`.",
       });
     }
+  }
 
-    if (/[^=!]==[^=]/.test(line)) {
-      issues.push({ line: lineNumber, type: "review", message: "Uses `==` for comparison. `===` (strict equality) is usually safer since it avoids implicit type coercion." });
+  if (node.type === "binary_expression" && node.childForFieldName("operator")?.text === "==") {
+    issues.push({
+      line: lineOf(node),
+      type: "review",
+      message: "Uses `==` for comparison. `===` (strict equality) is usually safer since it avoids implicit type coercion.",
+    });
+  }
+
+  if (node.type === "variable_declaration" && declarationKind(node) === "var") {
+    issues.push({
+      line: lineOf(node),
+      type: "review",
+      message: "Uses `var`. `let` or `const` have more predictable (block) scoping and are generally preferred.",
+    });
+  }
+
+  if (node.type === "function_declaration") {
+    const body = node.childForFieldName("body");
+    if (body && body.namedChildCount === 0) {
+      issues.push({
+        line: lineOf(node),
+        type: "warning",
+        message: "This function appears to have no implementation yet.",
+      });
+    }
+    checkUnusedVariables(node, issues);
+  }
+}
+
+function checkUnusedVariables(funcNode, issues) {
+  const assigned = new Map();
+  const identifierCounts = new Map();
+
+  function collect(node) {
+    if (node.type === "identifier") {
+      identifierCounts.set(node.text, (identifierCounts.get(node.text) || 0) + 1);
+    }
+    if (node.type === "variable_declarator") {
+      const name = node.childForFieldName("name");
+      if (name && name.type === "identifier" && !assigned.has(name.text)) {
+        assigned.set(name.text, lineOf(node));
+      }
+    }
+    for (const child of node.namedChildren) collect(child);
+  }
+  collect(funcNode);
+
+  for (const [name, line] of assigned) {
+    if ((identifierCounts.get(name) || 0) <= 1) {
+      issues.push({
+        line,
+        type: "review",
+        message: `Variable \`${name}\` appears to be declared but may not be used later.`,
+      });
+    }
+  }
+}
+
+// ------------------------------------------------------------
+// Structure
+// ------------------------------------------------------------
+
+function updateStructure(node, structure) {
+  const lineNumber = lineOf(node);
+
+  if (node.type === "comment") {
+    structure.comments.push(lineNumber);
+  } else if (node.type === "function_declaration") {
+    const nameNode = node.childForFieldName("name");
+    const paramsNode = node.childForFieldName("parameters");
+    structure.functions.push({
+      line: lineNumber,
+      name: nameNode ? nameNode.text : "?",
+      parameters: paramsNode ? paramsNode.text.slice(1, -1).trim() : "",
+    });
+  } else if (node.type === "variable_declarator" && node.childForFieldName("value")?.type === "arrow_function") {
+    const name = node.childForFieldName("name");
+    const value = node.childForFieldName("value");
+    const paramsNode = value.childForFieldName("parameters") || value.childForFieldName("parameter");
+    const params = paramsNode ? (paramsNode.namedChildren ? paramsNode.namedChildren.map((p) => p.text).join(", ") : paramsNode.text) : "";
+    structure.functions.push({ line: lineOf(node), name: name ? name.text : "?", parameters: params });
+  } else if (node.type === "class_declaration") {
+    const nameNode = node.childForFieldName("name");
+    structure.classes.push({ line: lineNumber, name: nameNode ? nameNode.text : "?" });
+  } else if (node.type === "import_statement") {
+    structure.imports.push(lineNumber);
+  } else if (node.type === "variable_declarator") {
+    const name = node.childForFieldName("name");
+    if (name && name.type === "identifier") {
+      structure.variables.push({ line: lineNumber, name: name.text });
+    }
+  } else if (node.type === "for_statement" || node.type === "for_in_statement" || node.type === "while_statement" || node.type === "do_statement") {
+    structure.loops.push(lineNumber);
+  } else if (node.type === "if_statement" || node.type === "switch_statement") {
+    structure.conditionals.push(lineNumber);
+  } else if (node.type === "return_statement") {
+    structure.returns.push(lineNumber);
+  } else if (node.type === "call_expression" && node.childForFieldName("function")?.type === "member_expression") {
+    const fn = node.childForFieldName("function");
+    if (fn.childForFieldName("object")?.text === "console") {
+      structure.outputs.push(lineNumber);
+    }
+  }
+}
+
+// ------------------------------------------------------------
+// Single entry point
+// ------------------------------------------------------------
+
+// Exported so typescript.js (whose grammar mirrors JS closely, and
+// which shared these exact functions when both were regex-based) can
+// reuse this logic wholesale instead of duplicating it, adding only
+// its own TS-specific handling (interfaces, type aliases, typed
+// declarations, `any` usage) on top.
+export { explainNode, checkIssues, updateStructure, buildSymbols, SUPERSEDED_MESSAGES, mdCode, lineOf };
+
+export async function analyzeAst(code) {
+  await ensureReady();
+
+  const parser = new Parser();
+  parser.setLanguage(JSLang);
+  const tree = parser.parse(code);
+  const root = tree.rootNode;
+
+  const structure = {
+    functions: [], classes: [], imports: [], variables: [],
+    loops: [], conditionals: [], returns: [], outputs: [], comments: [],
+  };
+  const issues = findCommonIssues(code.split("\n")).filter(
+    (issue) => !SUPERSEDED_MESSAGES.has(issue.message)
+  );
+  const lineExplanations = [];
+
+  function walk(node, symbols) {
+    updateStructure(node, structure);
+    checkIssues(node, issues);
+
+    if (node.type === "function_declaration") {
+      const explanation = explainNode(node, symbols);
+      if (explanation) lineExplanations.push({ line: lineOf(node), text: explanation });
+      const body = node.childForFieldName("body");
+      const localSymbols = buildSymbols(body);
+      for (const child of node.namedChildren) walk(child, localSymbols);
+      return;
     }
 
-    if (/\bvar\s+/.test(line)) {
-      issues.push({ line: lineNumber, type: "review", message: "Uses `var`. `let` or `const` have more predictable (block) scoping and are generally preferred." });
+    const explanation = explainNode(node, symbols);
+    if (explanation) {
+      lineExplanations.push({ line: lineOf(node), text: explanation });
     }
 
-    const emptyFn = /^(?:async\s+)?function\s+\w+\s*\([^)]*\)\s*\{\s*\}?$/.test(line);
-    if (emptyFn && /\{\s*\}$/.test(line)) {
-      issues.push({ line: lineNumber, type: "warning", message: "This function appears to have no implementation yet." });
-    }
-  });
+    for (const child of node.namedChildren) walk(child, symbols);
+  }
 
-  symbolTable.symbols.forEach((info) => {
-    // Functions/classes are commonly defined without being called within
-    // the same standalone snippet (e.g. a utility extracted from a larger
-    // file) — flagging that as "unused" produces a false positive on
-    // almost every single-function snippet, so only variables are checked.
-    if (["parameter", "loop-item", "function", "class"].includes(info.role)) return;
-    const name = info.name;
-    if (countUsages(lines, name) <= 1) {
-      const defLine = lines.findIndex((l) => new RegExp(`\\b${name}\\b`).test(l));
-      issues.push({ line: defLine + 1, type: "review", message: `Variable \`${name}\` appears to be declared but may not be used later.` });
-    }
-  });
+  walk(root, buildSymbols(root));
 
-  return issues;
+  lineExplanations.sort((a, b) => a.line - b.line);
+
+  return { structure, issues, lineExplanations };
 }

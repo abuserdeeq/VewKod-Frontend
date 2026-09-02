@@ -18,7 +18,7 @@
 // instead of the regex-based one.
 
 import Parser from "web-tree-sitter";
-import { findCommonIssues } from "../shared/patterns.js";
+import { findCommonIssues, mdCode } from "../shared/patterns.js";
 
 export const id = "python";
 export const label = "Python";
@@ -68,10 +68,6 @@ async function ensureReady() {
   await Parser.init(isNode ? undefined : { locateFile: () => WASM_CORE_PATH });
   PythonLang = await Parser.Language.load(WASM_PYTHON_PATH);
   ready = true;
-}
-
-function mdCode(text) {
-  return `\`${text}\``;
 }
 
 // Lightweight per-function symbol tracking — enough to answer "is

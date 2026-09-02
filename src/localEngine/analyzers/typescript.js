@@ -1,12 +1,28 @@
-import * as js from "./javascript.js";
-import { isCommentLine, commentExplanation, genericFallbackExplanation, explainTernary } from "../shared/patterns.js";
+// ============================================================
+// TypeScript analyzer — Tree-sitter (AST) based
+// ============================================================
+// tree-sitter-typescript's grammar is built on top of the JavaScript
+// grammar (confirmed during pilot testing: identical samples produced
+// identical results for both), so this reuses javascript.js's node
+// visitors wholesale via its exports, adding only TS-specific
+// handling on top: interface/type-alias declarations, typed variable
+// declarations (`const x: number = 5`), and flagging `any` usage.
+
+import Parser from "web-tree-sitter";
+import { findCommonIssues } from "../shared/patterns.js";
+import { explainNode as jsExplainNode, checkIssues as jsCheckIssues, updateStructure as jsUpdateStructure, buildSymbols, SUPERSEDED_MESSAGES, mdCode, lineOf } from "./javascript.js";
 
 export const id = "typescript";
 export const label = "TypeScript";
 
-// Reuse JavaScript's brace-based scoping — same block structure.
-export const scopeStyle = "brace";
-export const functionStartRegex = js.functionStartRegex;
+const isNode = typeof process !== "undefined" && !!process.versions?.node;
+
+const WASM_CORE_PATH = isNode
+  ? "./node_modules/web-tree-sitter/tree-sitter.wasm"
+  : "/wasm/tree-sitter.wasm";
+const WASM_TS_PATH = isNode
+  ? "./node_modules/tree-sitter-wasms/out/tree-sitter-typescript.wasm"
+  : "/wasm/tree-sitter-typescript.wasm";
 
 export function detect(code) {
   return (
@@ -15,87 +31,89 @@ export function detect(code) {
   );
 }
 
-export function buildSymbolTable(lines, symbolTable, lineScopes = []) {
-  js.buildSymbolTable(lines, symbolTable, lineScopes);
+let TSLang = null;
+let ready = false;
 
-  lines.forEach((rawLine, index) => {
-    const line = rawLine.trim();
-    if (!line || isCommentLine(line)) return;
-
-    const scope = lineScopes[index] || "global";
-
-    const iface = line.match(/^(?:export\s+)?interface\s+([A-Za-z_$][\w$]*)/);
-    if (iface) symbolTable.add(iface[1], "class", { kind: "interface" }, scope);
-
-    const typeAlias = line.match(/^(?:export\s+)?type\s+([A-Za-z_$][\w$]*)\s*=/);
-    if (typeAlias) symbolTable.add(typeAlias[1], "class", { kind: "type alias" }, scope);
-
-    // typed declaration: const x: number = 5;
-    const typed = line.match(/^(?:export\s+)?(const|let|var)\s+([A-Za-z_$][\w$]*)\s*:\s*([\w<>\[\]| ]+?)\s*=/);
-    if (typed) {
-      const tsType = typed[3].trim();
-      const roleMap = { string: "string", number: "number", boolean: "boolean" };
-      const role = roleMap[tsType] || (tsType.endsWith("[]") ? "list" : "variable");
-      symbolTable.add(typed[2], role, { tsType }, scope);
-    }
-  });
-
-  return symbolTable;
+async function ensureReady() {
+  if (ready) return;
+  await Parser.init(isNode ? undefined : { locateFile: () => WASM_CORE_PATH });
+  TSLang = await Parser.Language.load(WASM_TS_PATH);
+  ready = true;
 }
 
-export function analyzeStructure(lines) {
-  const structure = js.analyzeStructure(lines);
-  lines.forEach((rawLine, index) => {
-    const line = rawLine.trim();
-    if (/^(?:export\s+)?interface\s+([A-Za-z_$][\w$]*)/.test(line) || /^(?:export\s+)?type\s+([A-Za-z_$][\w$]*)\s*=/.test(line)) {
-      structure.classes.push({ line: index + 1, name: line.split(/\s+/)[line.startsWith("export") ? 2 : 1] });
-    }
-
-    // js.analyzeStructure's variable detector requires `name = value`
-    // directly (no `: Type` in between), so typed declarations like
-    // `let count: number = 0;` are silently missed. Catch those here.
-    const typedVar = line.match(/^(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*:\s*[\w<>[\]| ]+?\s*=/);
-    if (typedVar) structure.variables.push({ line: index + 1, name: typedVar[1] });
-  });
-  structure.variables.sort((a, b) => a.line - b.line);
-  return structure;
+// TS-specific node types on top of whatever javascript.js's
+// explainNode already handles for the shared JS subset.
+function explainTsNode(node) {
+  if (node.type === "interface_declaration") {
+    const nameNode = node.childForFieldName("name");
+    return `Defines the ${mdCode(nameNode ? nameNode.text : "?")} interface, describing the shape an object of this type must have.`;
+  }
+  if (node.type === "type_alias_declaration") {
+    const nameNode = node.childForFieldName("name");
+    const value = node.childForFieldName("value");
+    return `Defines a type alias ${mdCode(nameNode ? nameNode.text : "?")} equal to ${mdCode(value ? value.text : "?")}.`;
+  }
+  return null;
 }
 
-export function explainLine(rawLine, symbolTable, scope = "global") {
-  const trimmed = rawLine.trim();
-  if (!trimmed) return null;
-  if (isCommentLine(trimmed)) return commentExplanation();
+function checkTsIssues(node, issues) {
+  // `: any` anywhere a type annotation appears.
+  if (node.type === "type_annotation" && node.text.includes(": any")) {
+    issues.push({
+      line: lineOf(node),
+      type: "review",
+      message: "Uses the `any` type, which turns off type checking for this value. A more specific type is usually safer.",
+    });
+  }
+}
 
-  const iface = trimmed.match(/^(?:export\s+)?interface\s+([A-Za-z_$][\w$]*)/);
-  if (iface) return `Defines the \`${iface[1]}\` interface, describing the shape an object of this type must have.`;
+export async function analyzeAst(code) {
+  await ensureReady();
 
-  const typeAlias = trimmed.match(/^(?:export\s+)?type\s+([A-Za-z_$][\w$]*)\s*=\s*(.+?);?$/);
-  if (typeAlias) return `Defines a type alias \`${typeAlias[1]}\` equal to \`${typeAlias[2]}\`.`;
+  const parser = new Parser();
+  parser.setLanguage(TSLang);
+  const tree = parser.parse(code);
+  const root = tree.rootNode;
 
-  const typed = trimmed.match(/^(?:export\s+)?(const|let|var)\s+([A-Za-z_$][\w$]*)\s*:\s*([\w<>\[\]| ]+?)\s*=\s*(.+?);?$/);
-  if (typed) {
-    const [, keyword, name, tsType, value] = typed;
-    const ternary = explainTernary(name, value);
-    if (ternary) return ternary;
-    return `Declares the \`${keyword}\` variable \`${name}\` with type \`${tsType.trim()}\` and assigns it \`${value}\`.`;
+  const structure = {
+    functions: [], classes: [], imports: [], variables: [],
+    loops: [], conditionals: [], returns: [], outputs: [], comments: [],
+  };
+  const issues = findCommonIssues(code.split("\n")).filter(
+    (issue) => !SUPERSEDED_MESSAGES.has(issue.message)
+  );
+  const lineExplanations = [];
+
+  function walk(node, symbols) {
+    jsUpdateStructure(node, structure);
+    if (node.type === "interface_declaration" || node.type === "type_alias_declaration") {
+      const nameNode = node.childForFieldName("name");
+      structure.classes.push({ line: lineOf(node), name: nameNode ? nameNode.text : "?" });
+    }
+
+    jsCheckIssues(node, issues);
+    checkTsIssues(node, issues);
+
+    if (node.type === "function_declaration") {
+      const explanation = jsExplainNode(node, symbols) || explainTsNode(node);
+      if (explanation) lineExplanations.push({ line: lineOf(node), text: explanation });
+      const body = node.childForFieldName("body");
+      const localSymbols = buildSymbols(body);
+      for (const child of node.namedChildren) walk(child, localSymbols);
+      return;
+    }
+
+    const explanation = explainTsNode(node) || jsExplainNode(node, symbols);
+    if (explanation) {
+      lineExplanations.push({ line: lineOf(node), text: explanation });
+    }
+
+    for (const child of node.namedChildren) walk(child, symbols);
   }
 
-  const result = js.explainLine(rawLine, symbolTable, scope);
-  return result || genericFallbackExplanation();
-}
+  walk(root, buildSymbols(root));
 
-export function findIssues(lines, symbolTable) {
-  const issues = js.findIssues(lines, symbolTable);
+  lineExplanations.sort((a, b) => a.line - b.line);
 
-  lines.forEach((rawLine, index) => {
-    const line = rawLine.trim();
-    if (/:\s*any\b/.test(line)) {
-      issues.push({
-        line: index + 1, type: "review",
-        message: "Uses the `any` type, which turns off type checking for this value. A more specific type is usually safer.",
-      });
-    }
-  });
-
-  return issues;
+  return { structure, issues, lineExplanations };
 }
