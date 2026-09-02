@@ -16,8 +16,10 @@ const sampleHistory = [
 
 describe("HistoryPanel", () => {
   beforeEach(() => {
-    Object.assign(navigator, {
-      clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+      configurable: true,
+      writable: true,
     });
     // Simulate a browser without the Web Share API so the clipboard
     // fallback path is exercised in tests.

@@ -5,8 +5,10 @@ import ResultDisplay from "../../src/components/ResultDisplay.jsx";
 
 describe("ResultDisplay", () => {
   beforeEach(() => {
-    Object.assign(navigator, {
-      clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+      configurable: true,
+      writable: true,
     });
     delete navigator.share;
   });

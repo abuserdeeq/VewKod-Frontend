@@ -18,7 +18,7 @@ describe("Loader", () => {
 
   it("does not show the slow-fallback hint right away", () => {
     render(<Loader />);
-    expect(screen.queryByText(/falling back to the local/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/fall back to the local/i)).not.toBeInTheDocument();
   });
 
   it("shows the slow-fallback hint after the delay", () => {
@@ -26,6 +26,6 @@ describe("Loader", () => {
     act(() => {
       vi.advanceTimersByTime(4000);
     });
-    expect(screen.getByText(/falling back to the local/i)).toBeInTheDocument();
+    expect(screen.getByText(/fall back to the local/i)).toBeInTheDocument();
   });
 });
