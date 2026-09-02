@@ -23,6 +23,12 @@ import "prismjs/components/prism-cpp";
 import "prismjs/components/prism-csharp";
 import "prismjs/components/prism-go";
 import "prismjs/components/prism-rust";
+// prism-php depends on markup-templating (which itself depends on
+// markup) for its tokenizePlaceholders/buildPlaceholders helpers.
+// Without these, highlighting PHP throws:
+// "Cannot read properties of undefined (reading 'tokenizePlaceholders')"
+import "prismjs/components/prism-markup";
+import "prismjs/components/prism-markup-templating";
 import "prismjs/components/prism-php";
 import "prismjs/components/prism-swift";
 import "prismjs/components/prism-kotlin";
