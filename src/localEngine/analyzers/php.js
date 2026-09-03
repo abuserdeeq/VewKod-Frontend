@@ -51,8 +51,8 @@ async function ensureReady() {
   ready = true;
 }
 
-function lineOf(node) {
-  return node.startPosition.row + 1;
+function lineOf(node, lineOffset = 0) {
+  return node.startPosition.row + 1 - lineOffset;
 }
 
 // ------------------------------------------------------------
@@ -234,9 +234,7 @@ function checkPhpLineIssues(rawLine, lineNumber, taintedVars, issues) {
 // Structure
 // ------------------------------------------------------------
 
-function updateStructure(node, rawLine, structure) {
-  const lineNumber = lineOf(node);
-
+function updateStructure(node, rawLine, structure, lineNumber) {
   if (node.type === "comment") {
     structure.comments.push(lineNumber);
     return;
@@ -271,9 +269,21 @@ function updateStructure(node, rawLine, structure) {
 export async function analyzeAst(code) {
   await ensureReady();
 
+  // Tree-sitter-php's grammar treats the top level as an HTML
+  // document that only switches into PHP parsing inside <?php ... ?>
+  // blocks — anything outside of a tag is a single opaque "text"
+  // node, not statements. Snippets in this project (see `detect()`
+  // above) are routinely pasted without the tag, so parse a
+  // tag-prefixed copy of the source and shift line numbers back by
+  // the one line we added. `lines` (used for all rawLine lookups)
+  // stays based on the original, unmodified code.
+  const hasTag = /<\?php/.test(code);
+  const parseSource = hasTag ? code : `<?php\n${code}`;
+  const lineOffset = hasTag ? 0 : 1;
+
   const parser = new Parser();
   parser.setLanguage(PHPLang);
-  const tree = parser.parse(code);
+  const tree = parser.parse(parseSource);
   const root = tree.rootNode;
   const lines = code.split("\n");
 
@@ -288,10 +298,10 @@ export async function analyzeAst(code) {
   const issueCheckedLines = new Set();
 
   function walk(node) {
-    const lineNumber = lineOf(node);
+    const lineNumber = lineOf(node, lineOffset);
     const rawLine = lines[lineNumber - 1] || "";
 
-    updateStructure(node, rawLine, structure);
+    updateStructure(node, rawLine, structure, lineNumber);
     if (!issueCheckedLines.has(lineNumber)) {
       checkPhpLineIssues(rawLine, lineNumber, taintedVars, issues);
       issueCheckedLines.add(lineNumber);
@@ -315,7 +325,7 @@ export async function analyzeAst(code) {
       const next = node.nextNamedSibling;
       if (next && next.type !== "comment") {
         issues.push({
-          line: lineOf(next),
+          line: lineOf(next, lineOffset),
           type: "warning",
           message: "This line comes right after a `return` in the same block, so it can never be reached.",
         });
