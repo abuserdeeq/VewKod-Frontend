@@ -68,7 +68,8 @@ function buildSymbols(scopeNode) {
         if (role) symbols.set(name.text, role);
       }
     }
-    if (node.type === "enhanced_for_statement") {
+    // Some versions of tree-sitter-java parse enhanced for as for_statement
+    if (node.type === "enhanced_for_statement" || (node.type === "for_statement" && node.childForFieldName("value"))) {
       const name = node.childForFieldName("name");
       if (name) symbols.set(name.text, "loop-item");
     }
@@ -126,8 +127,18 @@ function explainNode(node, symbols) {
       return `Iterates over ${phrase}; on each pass, ${mdCode(name ? name.text : "?")} represents the current item.`;
     }
 
-    case "for_statement":
+    case "for_statement": {
+      // In some versions of tree-sitter-java, enhanced for loops are parsed as for_statement
+      const value = node.childForFieldName("value");
+      if (value) {
+        const name = node.childForFieldName("name");
+        const valueText = value ? value.text : "?";
+        const role = value && value.type === "identifier" ? symbols.get(value.text) : null;
+        const phrase = role === "list" ? `the ${mdCode(valueText)} list` : mdCode(valueText);
+        return `Iterates over ${phrase}; on each pass, ${mdCode(name ? name.text : "?")} represents the current item.`;
+      }
       return "Starts a counted loop that repeats a block of code a set number of times.";
+    }
 
     case "while_statement": {
       const condition = node.childForFieldName("condition");
@@ -154,6 +165,9 @@ function explainNode(node, symbols) {
       return null;
     }
 
+    case "try_statement":
+      return "Starts a `try` block that guards the following code and allows error handling.";
+
     case "catch_clause": {
       const param = node.namedChildren.find((c) => c.type === "catch_formal_parameter");
       const name = param ? param.namedChildren[param.namedChildren.length - 1]?.text : null;
@@ -161,6 +175,9 @@ function explainNode(node, symbols) {
         ? `Catches an exception raised in the \`try\` block above, made available here as \`${name}\`.`
         : "Catches an exception raised in the `try` block above.";
     }
+
+    case "finally_clause":
+      return "Defines a `finally` block that runs whether or not an exception occurred.";
 
     case "return_statement": {
       const value = node.namedChildren[0];
