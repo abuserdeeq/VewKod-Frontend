@@ -56,72 +56,19 @@ function typeRole(typeText) {
 // Per-method symbol tracking
 // ------------------------------------------------------------
 
-function getDeclaratorName(node) {
-  // Try multiple ways to find the variable name from a declarator
-  const name = node.childForFieldName("name");
-  if (name) return name;
-  // Fallback: find first identifier child
-  for (const child of node.namedChildren) {
-    if (child.type === "identifier") return child;
-  }
-  return null;
-}
-
-function getTypeNode(node) {
-  // Try field access first
-  const typeNode = node.childForFieldName("type");
-  if (typeNode) return typeNode;
-  // Fallback: first child that looks like a type
-  for (const child of node.namedChildren) {
-    if (child.type === "type_identifier" || child.type === "generic_type" || 
-        child.type === "array_type" || child.type === "integral_type" || 
-        child.type === "floating_point_type" || child.type === "boolean_type") {
-      return child;
-    }
-  }
-  return null;
-}
-
 function buildSymbols(scopeNode) {
   const symbols = new Map();
   function scan(node) {
-    // Handle local_variable_declaration (older tree-sitter-java versions)
     if (node.type === "local_variable_declaration") {
-      const typeNode = getTypeNode(node);
+      const typeNode = node.childForFieldName("type");
       const declarator = node.namedChildren.find((c) => c.type === "variable_declarator");
-      const name = declarator ? getDeclaratorName(declarator) : null;
-      if (name) {
-        const role = typeRole(typeNode ? typeNode.text : "");
-        if (role) symbols.set(name.text, role);
-      }
-    }
-    // Handle local_variable_declaration_statement (newer tree-sitter-java versions)
-    if (node.type === "local_variable_declaration_statement") {
-      const decl = node.namedChildren.find((c) => c.type === "local_variable_declaration");
-      if (decl) {
-        const typeNode = getTypeNode(decl);
-        const declarator = decl.namedChildren.find((c) => c.type === "variable_declarator");
-        const name = declarator ? getDeclaratorName(declarator) : null;
-        if (name) {
-          const role = typeRole(typeNode ? typeNode.text : "");
-          if (role) symbols.set(name.text, role);
-        }
-      }
-    }
-    // Handle formal parameters (method parameters)
-    if (node.type === "formal_parameter") {
-      const typeNode = getTypeNode(node);
-      const name = node.childForFieldName("name");
+      const name = declarator ? declarator.childForFieldName("name") : null;
       if (name) {
         const role = typeRole(typeNode ? typeNode.text : "");
         if (role) symbols.set(name.text, role);
       }
     }
     if (node.type === "enhanced_for_statement") {
-      const name = node.childForFieldName("name");
-      if (name) symbols.set(name.text, "loop-item");
-    }
-    if (node.type === "for_statement" && node.childForFieldName("value")) {
       const name = node.childForFieldName("name");
       if (name) symbols.set(name.text, "loop-item");
     }
@@ -179,34 +126,8 @@ function explainNode(node, symbols) {
       return `Iterates over ${phrase}; on each pass, ${mdCode(name ? name.text : "?")} represents the current item.`;
     }
 
-    case "for_statement": {
-      // Some versions parse enhanced for as for_statement
-      const value = node.childForFieldName("value");
-      if (value) {
-        const name = node.childForFieldName("name");
-        const valueText = value ? value.text : "?";
-        const role = value && value.type === "identifier" ? symbols.get(value.text) : null;
-        const phrase = role === "list" ? `the ${mdCode(valueText)} list` : mdCode(valueText);
-        return `Iterates over ${phrase}; on each pass, ${mdCode(name ? name.text : "?")} represents the current item.`;
-      }
-      // Fallback: detect enhanced for by text pattern (contains : but no ;)
-      const nodeText = node.text;
-      if (nodeText.includes(":") && !nodeText.includes(";")) {
-        const children = node.namedChildren;
-        let name = null, value = null;
-        for (const child of children) {
-          if (child.type === "identifier") {
-            if (!name) name = child;
-            else if (!value) value = child;
-          }
-        }
-        const valueText = value ? value.text : "?";
-        const role = value && value.type === "identifier" ? symbols.get(value.text) : null;
-        const phrase = role === "list" ? `the ${mdCode(valueText)} list` : mdCode(valueText);
-        return `Iterates over ${phrase}; on each pass, ${mdCode(name ? name.text : "?")} represents the current item.`;
-      }
+    case "for_statement":
       return "Starts a counted loop that repeats a block of code a set number of times.";
-    }
 
     case "while_statement": {
       const condition = node.childForFieldName("condition");
@@ -220,9 +141,22 @@ function explainNode(node, symbols) {
       const condition = node.childForFieldName("condition");
       const conditionText = condition ? condition.text.replace(/^\(|\)$/g, "") : "?";
       const isElseIf = node.parent && node.parent.type === "if_statement" && node.parent.childForFieldName("alternative") === node;
-      return isElseIf
-        ? `Checks another condition (${mdCode(conditionText)}) when the previous one was not met.`
-        : `Checks whether ${mdCode(conditionText)} is true before running the code that follows.`;
+      if (isElseIf) {
+        return `Checks another condition (${mdCode(conditionText)}) when the previous one was not met.`;
+      }
+      if (condition && condition.namedChildren[0]?.type === "identifier") {
+        const role = symbols.get(condition.namedChildren[0].text);
+        if (role === "list") {
+          return `Checks whether the ${mdCode(conditionText)} list is non-empty before running the code that follows.`;
+        }
+        if (role === "number") {
+          return `Checks whether the number stored in ${mdCode(conditionText)} is truthy before running the code that follows.`;
+        }
+        if (role === "loop-item") {
+          return `Checks whether the current item (${mdCode(conditionText)}) is truthy before running the code that follows.`;
+        }
+      }
+      return `Checks whether ${mdCode(conditionText)} is true before running the code that follows.`;
     }
 
     case "block": {
@@ -230,11 +164,24 @@ function explainNode(node, symbols) {
       if (parent && parent.type === "if_statement" && parent.childForFieldName("alternative") === node) {
         return "Defines the alternative block that runs when the previous condition is false.";
       }
+      // Allman style: the `{` sits alone on its own line, separate
+      // from the construct that owns it (method signature, if/for/
+      // while header, try, etc.) — nothing else would explain that
+      // line, so it's worth one of its own. In the far more common
+      // K&R style the block starts on the same line as its owner,
+      // which is already explained there — skip it then to avoid a
+      // redundant second entry for that same line.
+      if (parent && lineOf(node) !== lineOf(parent)) {
+        return "Opens a new block of code.";
+      }
       return null;
     }
 
     case "try_statement":
-      return "Starts a `try` block that guards the following code and allows error handling.";
+      return "Starts a `try` block; if an error occurs anywhere inside it, execution jumps to the matching `catch` block below.";
+
+    case "finally_clause":
+      return "Starts a `finally` block, which always runs after the `try`/`catch`, whether or not an error occurred.";
 
     case "catch_clause": {
       const param = node.namedChildren.find((c) => c.type === "catch_formal_parameter");
@@ -244,9 +191,6 @@ function explainNode(node, symbols) {
         : "Catches an exception raised in the `try` block above.";
     }
 
-    case "finally_clause":
-      return "Defines a `finally` block that runs whether or not an exception occurred.";
-
     case "return_statement": {
       const value = node.namedChildren[0];
       return value
@@ -254,17 +198,11 @@ function explainNode(node, symbols) {
         : "Returns control from the current method (void).";
     }
 
-    case "local_variable_declaration":
-    case "local_variable_declaration_statement": {
-      let decl = node;
-      if (node.type === "local_variable_declaration_statement") {
-        decl = node.namedChildren.find((c) => c.type === "local_variable_declaration");
-      }
-      if (!decl) return null;
-      const typeNode = getTypeNode(decl);
-      const declarator = decl.namedChildren.find((c) => c.type === "variable_declarator");
+    case "local_variable_declaration": {
+      const typeNode = node.childForFieldName("type");
+      const declarator = node.namedChildren.find((c) => c.type === "variable_declarator");
       if (!declarator) return null;
-      const name = getDeclaratorName(declarator);
+      const name = declarator.childForFieldName("name");
       const value = declarator.childForFieldName("value");
       const typeText = typeNode ? typeNode.text : "var";
       return value

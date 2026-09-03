@@ -102,22 +102,16 @@ function explainNode(node, symbols) {
         : `Defines the class \`${name}\`, which can serve as a blueprint for creating objects.`;
     }
 
-    case "method_declaration": {
+    case "method_declaration":
+    case "local_function_statement": {
+      // A bare function-looking declaration with no enclosing class
+      // (e.g. top-level statements, or just a pasted snippet) isn't
+      // valid as a `method_declaration` in C#'s grammar — it parses
+      // as `local_function_statement` instead. Same shape (name,
+      // parameters, return type, body), so it's handled identically.
       const nameNode = node.childForFieldName("name");
       const paramsNode = node.childForFieldName("parameters");
       const typeNode = node.childForFieldName("returns") || node.childForFieldName("type");
-      const params = paramsNode ? paramsNode.text.slice(1, -1).trim() : "";
-      const name = nameNode ? nameNode.text : "?";
-      const returnType = typeNode ? typeNode.text : "void";
-      return params
-        ? `Defines the method \`${name}\`, which accepts ${mdCode(params)} and returns ${mdCode(returnType)}.`
-        : `Defines the method \`${name}\`, which returns ${mdCode(returnType)} and takes no parameters.`;
-    }
-
-    case "local_function_statement": {
-      const nameNode = node.childForFieldName("name");
-      const paramsNode = node.childForFieldName("parameters");
-      const typeNode = node.childForFieldName("type");
       const params = paramsNode ? paramsNode.text.slice(1, -1).trim() : "";
       const name = nameNode ? nameNode.text : "?";
       const returnType = typeNode ? typeNode.text : "void";
@@ -171,21 +165,25 @@ function explainNode(node, symbols) {
       return "Defines the alternative block that runs when the previous condition is false.";
     }
 
+    case "block": {
+      const parent = node.parent;
+      // Allman style (the official Microsoft C# convention): the
+      // `{` sits alone on its own line, separate from the construct
+      // that owns it. In K&R style the block starts on the owner's
+      // own line, already explained there — skip it then to avoid a
+      // redundant second entry for that same line.
+      if (parent && parent.type !== "else_clause" && lineOf(node) !== lineOf(parent)) {
+        return "Opens a new block of code.";
+      }
+      return null;
+    }
+
     case "catch_clause": {
       const decl = node.namedChildren.find((c) => c.type === "catch_declaration");
       const name = decl ? decl.namedChildren.find((c) => c.type === "identifier")?.text : null;
       return name
         ? `Catches an exception raised in the \`try\` block above, made available here as \`${name}\`.`
         : "Catches an exception raised in the `try` block above.";
-    }
-
-    case "block": {
-      const parent = node.parent;
-      // Explain Allman-style opening braces (brace on its own line)
-      if (parent && node.startPosition.row > parent.startPosition.row) {
-        return "Opens a new block of code.";
-      }
-      return null;
     }
 
     case "return_statement": {
@@ -323,7 +321,7 @@ function checkIssues(node, issues) {
       issues.push({
         line: lineOf(node),
         type: "security",
-        message: "`BinaryFormatter`/` .Deserialize()` on untrusted data can lead to remote code execution. Prefer a data-only format like JSON, and avoid `BinaryFormatter` entirely (it's deprecated for security reasons).",
+        message: "`BinaryFormatter`/`.Deserialize()` on untrusted data can lead to remote code execution. Prefer a data-only format like JSON, and avoid `BinaryFormatter` entirely (it's deprecated for security reasons).",
       });
     }
   }
@@ -332,7 +330,7 @@ function checkIssues(node, issues) {
     issues.push({
       line: lineOf(node),
       type: "security",
-      message: "`BinaryFormatter`/` .Deserialize()` on untrusted data can lead to remote code execution. Prefer a data-only format like JSON, and avoid `BinaryFormatter` entirely (it's deprecated for security reasons).",
+      message: "`BinaryFormatter`/`.Deserialize()` on untrusted data can lead to remote code execution. Prefer a data-only format like JSON, and avoid `BinaryFormatter` entirely (it's deprecated for security reasons).",
     });
   }
 }
