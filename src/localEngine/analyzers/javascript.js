@@ -328,6 +328,11 @@ function explainNode(node, symbols) {
           const arg = argsNode ? argsNode.namedChildren[0] : null;
           const argText = arg ? mdCode(arg.text) : null;
           if (method === "log") {
+            if (arg && arg.type === "identifier") {
+              const role = symbols.get(arg.text);
+              if (role === "number") return `Displays the number stored in ${mdCode(arg.text)} in the browser/console.`;
+              if (role === "loop-item") return `Displays the current item (${mdCode(arg.text)}) in the browser/console.`;
+            }
             return argText ? `Displays ${argText} in the browser/console.` : "Prints a blank line to the console.";
           }
           const verb = { error: "Logs an error", warn: "Logs a warning", info: "Logs an informational message", debug: "Logs a debug message" }[method];
