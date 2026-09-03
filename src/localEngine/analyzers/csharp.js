@@ -114,6 +114,18 @@ function explainNode(node, symbols) {
         : `Defines the method \`${name}\`, which returns ${mdCode(returnType)} and takes no parameters.`;
     }
 
+    case "local_function_statement": {
+      const nameNode = node.childForFieldName("name");
+      const paramsNode = node.childForFieldName("parameters");
+      const typeNode = node.childForFieldName("type");
+      const params = paramsNode ? paramsNode.text.slice(1, -1).trim() : "";
+      const name = nameNode ? nameNode.text : "?";
+      const returnType = typeNode ? typeNode.text : "void";
+      return params
+        ? `Defines the method \`${name}\`, which accepts ${mdCode(params)} and returns ${mdCode(returnType)}.`
+        : `Defines the method \`${name}\`, which returns ${mdCode(returnType)} and takes no parameters.`;
+    }
+
     case "constructor_declaration": {
       const paramsNode = node.childForFieldName("parameters");
       const params = paramsNode ? paramsNode.text.slice(1, -1).trim() : "";
@@ -165,6 +177,16 @@ function explainNode(node, symbols) {
       return name
         ? `Catches an exception raised in the \`try\` block above, made available here as \`${name}\`.`
         : "Catches an exception raised in the `try` block above.";
+    }
+
+    case "block": {
+      const parent = node.parent;
+      if (parent && (parent.type === "method_declaration" || parent.type === "constructor_declaration" || parent.type === "local_function_statement" || parent.type === "class_declaration" || parent.type === "using_statement" || parent.type === "if_statement" || parent.type === "while_statement" || parent.type === "for_statement" || parent.type === "foreach_statement")) {
+        if (node.startPosition.row > parent.startPosition.row) {
+          return "Opens a new block of code.";
+        }
+      }
+      return null;
     }
 
     case "return_statement": {
@@ -302,7 +324,7 @@ function checkIssues(node, issues) {
       issues.push({
         line: lineOf(node),
         type: "security",
-        message: "`BinaryFormatter`/`.Deserialize()` on untrusted data can lead to remote code execution. Prefer a data-only format like JSON, and avoid `BinaryFormatter` entirely (it's deprecated for security reasons).",
+        message: "`BinaryFormatter`/` .Deserialize()` on untrusted data can lead to remote code execution. Prefer a data-only format like JSON, and avoid `BinaryFormatter` entirely (it's deprecated for security reasons).",
       });
     }
   }
@@ -311,7 +333,7 @@ function checkIssues(node, issues) {
     issues.push({
       line: lineOf(node),
       type: "security",
-      message: "`BinaryFormatter`/`.Deserialize()` on untrusted data can lead to remote code execution. Prefer a data-only format like JSON, and avoid `BinaryFormatter` entirely (it's deprecated for security reasons).",
+      message: "`BinaryFormatter`/` .Deserialize()` on untrusted data can lead to remote code execution. Prefer a data-only format like JSON, and avoid `BinaryFormatter` entirely (it's deprecated for security reasons).",
     });
   }
 }
@@ -352,7 +374,7 @@ function updateStructure(node, structure) {
 
   if (node.type === "comment") {
     structure.comments.push(lineNumber);
-  } else if (node.type === "method_declaration") {
+  } else if (node.type === "method_declaration" || node.type === "local_function_statement") {
     const nameNode = node.childForFieldName("name");
     const paramsNode = node.childForFieldName("parameters");
     structure.functions.push({
@@ -404,7 +426,7 @@ export async function analyzeAst(code) {
     updateStructure(node, structure);
     checkIssues(node, issues);
 
-    if (node.type === "method_declaration" || node.type === "constructor_declaration") {
+    if (node.type === "method_declaration" || node.type === "constructor_declaration" || node.type === "local_function_statement") {
       const explanation = explainNode(node, symbols);
       if (explanation) lineExplanations.push({ line: lineOf(node), text: explanation });
       const body = node.childForFieldName("body");
