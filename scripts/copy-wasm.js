@@ -1,12 +1,13 @@
-// Copies the .wasm files the Tree-sitter-based Python local-engine
-// analyzer needs at runtime from node_modules into public/wasm/, so
+// Copies the .wasm files the Tree-sitter-based local-engine
+// analyzers (Python, JavaScript, TypeScript, PHP, and more to
+// follow) need at runtime from node_modules into public/wasm/, so
 // Vite serves them as static assets (reachable at /wasm/... in the
 // browser). Runs automatically as a postinstall step — no manual
 // copying needed after `npm install`.
 //
 // If either source file is missing (e.g. a package's internal
 // folder structure changed), this warns instead of crashing the
-// install — the app still builds, but the Python local-engine
+// install — the app still builds, but that language's local-engine
 // fallback would fail at runtime until the path is fixed. Report
 // any "[copy-wasm] Skipping missing file" warning back so the path
 // can be corrected.
@@ -33,6 +34,11 @@ const copies = [
     from: "node_modules/tree-sitter-wasms/out/tree-sitter-typescript.wasm",
     to: "public/wasm/tree-sitter-typescript.wasm",
     note: "TypeScript grammar",
+  },
+  {
+    from: "node_modules/tree-sitter-wasms/out/tree-sitter-php.wasm",
+    to: "public/wasm/tree-sitter-php.wasm",
+    note: "PHP grammar",
   },
 ];
 
