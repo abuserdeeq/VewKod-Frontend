@@ -181,10 +181,9 @@ function explainNode(node, symbols) {
 
     case "block": {
       const parent = node.parent;
-      if (parent && (parent.type === "method_declaration" || parent.type === "constructor_declaration" || parent.type === "local_function_statement" || parent.type === "class_declaration" || parent.type === "using_statement" || parent.type === "if_statement" || parent.type === "while_statement" || parent.type === "for_statement" || parent.type === "foreach_statement")) {
-        if (node.startPosition.row > parent.startPosition.row) {
-          return "Opens a new block of code.";
-        }
+      // Explain Allman-style opening braces (brace on its own line)
+      if (parent && node.startPosition.row > parent.startPosition.row) {
+        return "Opens a new block of code.";
       }
       return null;
     }
