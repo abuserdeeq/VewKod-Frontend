@@ -36,6 +36,16 @@ const copies = [
     note: "TypeScript grammar",
   },
   {
+    from: "node_modules/tree-sitter-wasms/out/tree-sitter-java.wasm",
+    to: "public/wasm/tree-sitter-java.wasm",
+    note: "Java grammar",
+  },
+  {
+    from: "node_modules/tree-sitter-wasms/out/tree-sitter-c_sharp.wasm",
+    to: "public/wasm/tree-sitter-c_sharp.wasm",
+    note: "C# grammar",
+  },
+  {
     from: "node_modules/tree-sitter-wasms/out/tree-sitter-php.wasm",
     to: "public/wasm/tree-sitter-php.wasm",
     note: "PHP grammar",
