@@ -1,16 +1,14 @@
 // Run: node src/localEngine/pilot/pilot-test.mjs
 //
-// Tests every language pilot currently under development (Python
-// graduated to production — see src/localEngine/analyzers/python.js
-// — so it's no longer tested here). Not part of the app or the test
-// suite — paste whatever this prints back into the chat.
+// Tests every language pilot currently under development (Python,
+// JavaScript, TypeScript, and PHP graduated to production — see
+// src/localEngine/analyzers/{python,javascript,typescript,php}.js —
+// so none of them are tested here anymore). Not part of the app or
+// the test suite — paste whatever this prints back into the chat.
 
 import fs from "node:fs";
-import { analyzeJavaScriptAst } from "./jsTreeSitter.js";
-import { analyzeTypeScriptAst } from "./tsTreeSitter.js";
 import { analyzeGoAst } from "./goTreeSitter.js";
 import { analyzeRustAst } from "./rustTreeSitter.js";
-import { analyzePHPAst } from "./phpTreeSitter.js";
 import { analyzeJavaAst } from "./javaTreeSitter.js";
 import { analyzeCSharpAst } from "./csharpTreeSitter.js";
 import { analyzeKotlinAst } from "./kotlinTreeSitter.js";
@@ -20,11 +18,8 @@ import { analyzeCppAst } from "./cppTreeSitter.js";
 import { analyzeBashAst } from "./bashTreeSitter.js";
 
 const wasmPaths = {
-  javascript: "./node_modules/tree-sitter-wasms/out/tree-sitter-javascript.wasm",
-  typescript: "./node_modules/tree-sitter-wasms/out/tree-sitter-typescript.wasm",
   go: "./node_modules/tree-sitter-wasms/out/tree-sitter-go.wasm",
   rust: "./node_modules/tree-sitter-wasms/out/tree-sitter-rust.wasm",
-  php: "./node_modules/tree-sitter-wasms/out/tree-sitter-php.wasm",
   java: "./node_modules/tree-sitter-wasms/out/tree-sitter-java.wasm",
   csharp: "./node_modules/tree-sitter-wasms/out/tree-sitter-c_sharp.wasm",
   kotlin: "./node_modules/tree-sitter-wasms/out/tree-sitter-kotlin.wasm",
@@ -55,42 +50,6 @@ async function runSamples(label, analyzeFn, samples, wasmPaths) {
   }
 }
 
-// ---------------- JavaScript ----------------
-await runSamples("JAVASCRIPT", analyzeJavaScriptAst, {
-  "unreachable + empty catch": `function calculateFee(amount, count) {
-  if (count > 0) {
-    return amount / count;
-    console.log("This will never run");
-  }
-  return amount / 0;
-}
-function processOrder(order) {
-  try {
-    return chargeCard(order);
-  } catch (e) {
-  }
-}
-`,
-}, wasmPaths);
-
-// ---------------- TypeScript ----------------
-await runSamples("TYPESCRIPT", analyzeTypeScriptAst, {
-  "unreachable + empty catch": `function calculateFee(amount: number, count: number): number {
-  if (count > 0) {
-    return amount / count;
-    console.log("This will never run");
-  }
-  return amount / 0;
-}
-function processOrder(order: Order): boolean {
-  try {
-    return chargeCard(order);
-  } catch (e) {
-  }
-}
-`,
-}, wasmPaths);
-
 // ---------------- Go ----------------
 await runSamples("GO", analyzeGoAst, {
   "unreachable (no catch equivalent)": `func calculateFee(amount float64, count int) float64 {
@@ -111,25 +70,6 @@ await runSamples("RUST", analyzeRustAst, {
         println!("This will never run");
     }
     return amount / 0;
-}
-`,
-}, wasmPaths);
-
-// ---------------- PHP ----------------
-await runSamples("PHP", analyzePHPAst, {
-  "unreachable + empty catch": `<?php
-function calculateFee($amount, $count) {
-    if ($count > 0) {
-        return $amount / $count;
-        echo "This will never run";
-    }
-    return $amount / 0;
-}
-function processOrder($order) {
-    try {
-        return chargeCard($order);
-    } catch (Exception $e) {
-    }
 }
 `,
 }, wasmPaths);
