@@ -177,7 +177,15 @@ function explainNode(node, symbols) {
         return `Creates the \`${keyword}\` array \`${name.text}\`${items ? ` containing ${mdCode(items)}` : " (empty)"}.`;
       }
       if (value && value.type === "object") {
-        return `Creates the \`${keyword}\` object \`${name.text}\` with the properties ${mdCode(value.text)}.`;
+        // List property names instead of quoting the raw object
+        // text, which is very often multi-line in real code and
+        // would otherwise break a single Markdown bullet line.
+        const propNames = value.namedChildren
+          .map((p) => p.childForFieldName("key")?.text)
+          .filter(Boolean);
+        return propNames.length
+          ? `Creates the \`${keyword}\` object \`${name.text}\` with the propert${propNames.length === 1 ? "y" : "ies"} ${propNames.map((n) => mdCode(n)).join(", ")}.`
+          : `Creates the \`${keyword}\` object \`${name.text}\` (empty).`;
       }
       return `Declares the \`${keyword}\` variable \`${name.text}\`${value ? ` and assigns it ${mdCode(value.text)}` : ""}.`;
     }
@@ -353,6 +361,25 @@ function explainNode(node, symbols) {
           const obj = fn.childForFieldName("object");
           const prop = fn.childForFieldName("property");
           const argsNode = inner.childForFieldName("arguments");
+          const firstArg = argsNode ? argsNode.namedChildren[0] : null;
+
+          // A callback argument (arrow function or function expression)
+          // has a multi-line body — dumping its raw source text into
+          // the args list would break a single Markdown bullet line.
+          // Describe it instead of quoting it.
+          if (firstArg && (firstArg.type === "arrow_function" || firstArg.type === "function")) {
+            const paramsNode = firstArg.childForFieldName("parameters") || firstArg.childForFieldName("parameter");
+            const params = paramsNode
+              ? (paramsNode.namedChildren ? paramsNode.namedChildren.map((p) => p.text).join(", ") : paramsNode.text)
+              : "";
+            const callbackDesc = params
+              ? `a callback that runs for each item (as ${mdCode(params)})`
+              : "a callback";
+            return obj && prop
+              ? `Calls \`.${prop.text}()\` on ${mdCode(obj.text)}, passing ${callbackDesc}.`
+              : null;
+          }
+
           const args = argsNode ? argsNode.text.slice(1, -1).trim() : "";
           if (obj && prop) {
             return args
