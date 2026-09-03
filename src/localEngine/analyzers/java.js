@@ -1,185 +1,437 @@
-import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement, explainTernary, explainClassicForLoop , explainBraceTryCatch, explainBareFunctionCall , explainLoneOpenBrace } from "../shared/patterns.js";
+// ============================================================
+// Java analyzer — Tree-sitter (AST) based
+// ============================================================
+// Same architecture as python.js/javascript.js: single async
+// analyzeAst(code) entry point, per-method symbol tracking, shared
+// findCommonIssues() merged with the two AST-superseded checks
+// filtered out.
+
+import Parser from "web-tree-sitter";
+import { findCommonIssues, mdCode } from "../shared/patterns.js";
 
 export const id = "java";
 export const label = "Java";
 
-// Function-level scoping (see shared/patterns.js computeLineScopes):
-// Java method bodies are brace-delimited.
-export const scopeStyle = "brace";
-export const functionStartRegex = /^(?:public|private|protected)?\s*(?:static\s+)?[\w<>\[\]]+\s+([A-Za-z_$][\w$]*)\s*\(/;
+const isNode = typeof process !== "undefined" && !!process.versions?.node;
+
+const WASM_CORE_PATH = isNode
+  ? "./node_modules/web-tree-sitter/tree-sitter.wasm"
+  : "/wasm/tree-sitter.wasm";
+const WASM_JAVA_PATH = isNode
+  ? "./node_modules/tree-sitter-wasms/out/tree-sitter-java.wasm"
+  : "/wasm/tree-sitter-java.wasm";
 
 export function detect(code) {
   return /\b(public|private|protected)\b/.test(code) && /\b(class|static|void|int|String)\b/.test(code);
 }
 
+let JavaLang = null;
+let ready = false;
+
+async function ensureReady() {
+  if (ready) return;
+  await Parser.init(isNode ? undefined : { locateFile: () => WASM_CORE_PATH });
+  JavaLang = await Parser.Language.load(WASM_JAVA_PATH);
+  ready = true;
+}
+
+function lineOf(node) {
+  return node.startPosition.row + 1;
+}
+
 const COLLECTION_TYPES = /^(ArrayList|List|LinkedList)\s*<.*>$/;
 const MAP_TYPES = /^(HashMap|Map|TreeMap)\s*<.*>$/;
 
-function typeRole(type) {
-  const t = type.trim();
+function typeRole(typeText) {
+  const t = (typeText || "").trim();
   if (COLLECTION_TYPES.test(t)) return "list";
   if (MAP_TYPES.test(t)) return "dict";
   if (t === "String") return "string";
   if (["int", "long", "double", "float", "short", "Integer", "Double"].includes(t)) return "number";
   if (t === "boolean" || t === "Boolean") return "boolean";
-  return "variable";
+  return null;
 }
 
-export function buildSymbolTable(lines, symbolTable, lineScopes = []) {
-  lines.forEach((rawLine, index) => {
-    const line = rawLine.trim();
-    if (!line || isCommentLine(line)) return;
+// ------------------------------------------------------------
+// Per-method symbol tracking
+// ------------------------------------------------------------
 
-    const scope = lineScopes[index] || "global";
-
-    const cls = line.match(/\bclass\s+([A-Za-z_$][\w$]*)/);
-    if (cls) symbolTable.add(cls[1], "class", {}, scope);
-
-    const method = line.match(/^(?:public|private|protected)?\s*(?:static\s+)?[\w<>\[\]]+\s+([A-Za-z_$][\w$]*)\s*\(([^)]*)\)\s*\{?$/);
-    if (method && !/\b(if|for|while|switch)\b/.test(line)) {
-      symbolTable.add(method[1], "function", { parameters: method[2].trim() }, scope);
-      const fnScope = `${scope}>${method[1]}#${index}`;
-      method[2].split(",").map((p) => p.trim().split(/\s+/).pop()).filter(Boolean).forEach((p) => symbolTable.add(p, "parameter", {}, fnScope));
+function buildSymbols(scopeNode) {
+  const symbols = new Map();
+  function scan(node) {
+    if (node.type === "local_variable_declaration") {
+      const typeNode = node.childForFieldName("type");
+      const declarator = node.namedChildren.find((c) => c.type === "variable_declarator");
+      const name = declarator ? declarator.childForFieldName("name") : null;
+      if (name) {
+        const role = typeRole(typeNode ? typeNode.text : "");
+        if (role) symbols.set(name.text, role);
+      }
     }
-
-    // Type varName = value;
-    const decl = line.match(/^(?:public|private|protected)?\s*(?:static\s+)?(?:final\s+)?([\w<>\[\], ]+?)\s+([A-Za-z_$][\w$]*)\s*=\s*(.+);/);
-    if (decl) symbolTable.add(decl[2], typeRole(decl[1]), {}, scope);
-
-    // enhanced for: for (Type item : items)
-    const forEach = line.match(/^for\s*\(\s*[\w<>\[\]]+\s+([A-Za-z_$][\w$]*)\s*:\s*([A-Za-z_$][\w$]*)\s*\)/);
-    if (forEach) {
-      const info = symbolTable.get(forEach[2], scope);
-      symbolTable.add(forEach[1], "loop-item", { of: forEach[2], ofType: info ? info.role : "collection" }, scope);
+    if (node.type === "enhanced_for_statement") {
+      const name = node.childForFieldName("name");
+      if (name) symbols.set(name.text, "loop-item");
     }
-  });
-
-  return symbolTable;
+    for (const child of node.namedChildren) scan(child);
+  }
+  if (scopeNode) scan(scopeNode);
+  return symbols;
 }
 
-export function analyzeStructure(lines) {
-  const result = { functions: [], classes: [], imports: [], variables: [], loops: [], conditionals: [], returns: [], outputs: [], comments: [] };
+// ------------------------------------------------------------
+// Per-line explanation
+// ------------------------------------------------------------
 
-  lines.forEach((rawLine, index) => {
-    const lineNumber = index + 1;
-    const line = rawLine.trim();
-    if (!line) return;
-    if (isCommentLine(line)) result.comments.push(lineNumber);
+function explainNode(node, symbols) {
+  switch (node.type) {
+    case "import_declaration":
+      return "Imports a class or package so it can be used in this file.";
 
-    const cls = line.match(/\bclass\s+([A-Za-z_$][\w$]*)/);
-    if (cls) result.classes.push({ line: lineNumber, name: cls[1] });
+    case "class_declaration": {
+      const nameNode = node.childForFieldName("name");
+      const superclass = node.childForFieldName("superclass");
+      const base = superclass ? superclass.namedChildren[0]?.text : null;
+      const name = nameNode ? nameNode.text : "?";
+      return base
+        ? `Defines the class \`${name}\`, which extends \`${base}\` (inherits its members).`
+        : `Defines the class \`${name}\`, which can serve as a blueprint for creating objects.`;
+    }
 
-    const method = line.match(/^(?:public|private|protected)?\s*(?:static\s+)?[\w<>\[\]]+\s+([A-Za-z_$][\w$]*)\s*\(([^)]*)\)\s*\{?$/);
-    if (method && !/\b(if|for|while|switch)\b/.test(line)) result.functions.push({ line: lineNumber, name: method[1], parameters: method[2] });
+    case "method_declaration": {
+      const nameNode = node.childForFieldName("name");
+      const paramsNode = node.childForFieldName("parameters");
+      const typeNode = node.childForFieldName("type");
+      const params = paramsNode ? paramsNode.text.slice(1, -1).trim() : "";
+      const name = nameNode ? nameNode.text : "?";
+      const returnType = typeNode ? typeNode.text : "void";
+      return params
+        ? `Defines the method \`${name}\`, which accepts ${mdCode(params)} and returns ${mdCode(returnType)}.`
+        : `Defines the method \`${name}\`, which returns ${mdCode(returnType)} and takes no parameters.`;
+    }
 
-    if (/^import\b/.test(line)) result.imports.push(lineNumber);
-    if (/^(for|while)\b/.test(line)) result.loops.push(lineNumber);
-    if (/^if\s*\(/.test(line) || /^(else|switch|case)\b/.test(line)) result.conditionals.push(lineNumber);
-    if (/^return\b/.test(line)) result.returns.push(lineNumber);
-    if (/System\.out\.print/.test(line)) result.outputs.push(lineNumber);
-  });
+    case "constructor_declaration": {
+      const paramsNode = node.childForFieldName("parameters");
+      const params = paramsNode ? paramsNode.text.slice(1, -1).trim() : "";
+      return params
+        ? `Defines the constructor for this class, which accepts ${mdCode(params)} and runs when a new instance is created.`
+        : "Defines the constructor for this class, which runs when a new instance is created.";
+    }
 
-  return result;
+    case "enhanced_for_statement": {
+      const name = node.childForFieldName("name");
+      const value = node.childForFieldName("value");
+      const valueText = value ? value.text : "?";
+      const role = value && value.type === "identifier" ? symbols.get(value.text) : null;
+      const phrase = role === "list" ? `the ${mdCode(valueText)} list` : mdCode(valueText);
+      return `Iterates over ${phrase}; on each pass, ${mdCode(name ? name.text : "?")} represents the current item.`;
+    }
+
+    case "for_statement":
+      return "Starts a counted loop that repeats a block of code a set number of times.";
+
+    case "while_statement": {
+      const condition = node.childForFieldName("condition");
+      if (condition && condition.text === "(true)") {
+        return "Starts an intentionally infinite loop, which must be exited with a `break` or `return` elsewhere.";
+      }
+      return "Starts a while loop that keeps running while its condition stays true.";
+    }
+
+    case "if_statement": {
+      const condition = node.childForFieldName("condition");
+      const conditionText = condition ? condition.text.replace(/^\(|\)$/g, "") : "?";
+      const isElseIf = node.parent && node.parent.type === "if_statement" && node.parent.childForFieldName("alternative") === node;
+      return isElseIf
+        ? `Checks another condition (${mdCode(conditionText)}) when the previous one was not met.`
+        : `Checks whether ${mdCode(conditionText)} is true before running the code that follows.`;
+    }
+
+    case "block": {
+      const parent = node.parent;
+      if (parent && parent.type === "if_statement" && parent.childForFieldName("alternative") === node) {
+        return "Defines the alternative block that runs when the previous condition is false.";
+      }
+      return null;
+    }
+
+    case "catch_clause": {
+      const param = node.namedChildren.find((c) => c.type === "catch_formal_parameter");
+      const name = param ? param.namedChildren[param.namedChildren.length - 1]?.text : null;
+      return name
+        ? `Catches an exception raised in the \`try\` block above, made available here as \`${name}\`.`
+        : "Catches an exception raised in the `try` block above.";
+    }
+
+    case "return_statement": {
+      const value = node.namedChildren[0];
+      return value
+        ? `Returns ${mdCode(value.text)} from the current method.`
+        : "Returns control from the current method (void).";
+    }
+
+    case "local_variable_declaration": {
+      const typeNode = node.childForFieldName("type");
+      const declarator = node.namedChildren.find((c) => c.type === "variable_declarator");
+      if (!declarator) return null;
+      const name = declarator.childForFieldName("name");
+      const value = declarator.childForFieldName("value");
+      const typeText = typeNode ? typeNode.text : "var";
+      return value
+        ? `Declares a ${mdCode(typeText)} variable ${mdCode(name ? name.text : "?")} and assigns it ${mdCode(value.text)}.`
+        : `Declares a ${mdCode(typeText)} variable ${mdCode(name ? name.text : "?")}.`;
+    }
+
+    case "expression_statement": {
+      const inner = node.namedChildren[0];
+      if (!inner) return null;
+
+      if (inner.type === "method_invocation") {
+        const obj = inner.childForFieldName("object");
+        const name = inner.childForFieldName("name");
+        const argsNode = inner.childForFieldName("arguments");
+        const args = argsNode ? argsNode.text.slice(1, -1).trim() : "";
+
+        // System.out.println/print
+        if (obj && obj.type === "field_access" && obj.text === "System.out") {
+          return args ? `Prints ${mdCode(args)} to the console.` : "Prints a blank line to the console.";
+        }
+
+        if (obj) {
+          return args
+            ? `Calls \`.${name.text}(${args})\` on ${mdCode(obj.text)}.`
+            : `Calls \`.${name.text}()\` on ${mdCode(obj.text)}.`;
+        }
+        return args
+          ? `Calls \`${name.text}()\` with the provided argument(s).`
+          : `Calls \`${name.text}()\` without arguments.`;
+      }
+
+      if (inner.type === "assignment_expression") {
+        const left = inner.childForFieldName("left");
+        const right = inner.childForFieldName("right");
+        const operator = inner.childForFieldName("operator")?.text || "=";
+        if (operator !== "=") {
+          const opVerbs = {
+            "+=": ["Increases", "by"], "-=": ["Decreases", "by"],
+            "*=": ["Multiplies", "by"], "/=": ["Divides", "by"],
+          };
+          const [verb, prep] = opVerbs[operator] || ["Updates", "by"];
+          return `${verb} ${mdCode(left ? left.text : "?")} ${prep} ${mdCode(right ? right.text : "?")}.`;
+        }
+        return `Sets ${mdCode(left ? left.text : "?")} to ${mdCode(right ? right.text : "?")}.`;
+      }
+
+      if (inner.type === "update_expression") {
+        const isIncrement = inner.text.includes("++");
+        const target = inner.namedChildren[0];
+        return `${isIncrement ? "Increments" : "Decrements"} ${mdCode(target ? target.text : "?")} by 1.`;
+      }
+
+      return null;
+    }
+
+    default:
+      return null;
+  }
 }
 
-export function explainLine(rawLine, symbolTable, scope = "global") {
-  const trimmed = rawLine.trim();
-  if (!trimmed) return null;
-  if (isCommentLine(trimmed)) return commentExplanation();
+// ------------------------------------------------------------
+// Issue checks
+// ------------------------------------------------------------
 
-  const loneBrace = explainLoneOpenBrace(trimmed);
-  if (loneBrace) return loneBrace;
+const SUPERSEDED_MESSAGES = new Set([
+  "This error handler is empty — the exception is silently swallowed. Consider at least logging it, even if no other action is needed.",
+  "This line comes right after a `return` in the same block, so it can never be reached.",
+]);
 
-  if (/^import\b/.test(trimmed)) return "Imports a class or package so it can be used in this file.";
-
-  const cls = trimmed.match(/\bclass\s+([A-Za-z_$][\w$]*)/);
-  if (cls) return `Defines the class \`${cls[1]}\`, which can serve as a blueprint for creating objects.`;
-
-  const method = trimmed.match(/^(?:public|private|protected)?\s*(?:static\s+)?([\w<>\[\]]+)\s+([A-Za-z_$][\w$]*)\s*\(([^)]*)\)\s*\{?$/);
-  if (method && !/\b(if|for|while|switch)\b/.test(trimmed)) {
-    const [, returnType, name, params] = method;
-    return params.trim()
-      ? `Defines the method \`${name}\`, which accepts \`${params.trim()}\` and returns \`${returnType}\`.`
-      : `Defines the method \`${name}\`, which returns \`${returnType}\` and takes no parameters.`;
+function checkIssues(node, issues) {
+  if (node.type === "catch_clause") {
+    const body = node.childForFieldName("body");
+    if (body && body.namedChildCount === 0) {
+      issues.push({
+        line: lineOf(node),
+        type: "review",
+        message: "This error handler is empty — the exception is silently swallowed. Consider at least logging it, even if no other action is needed.",
+      });
+    }
+    const param = node.namedChildren.find((c) => c.type === "catch_formal_parameter");
+    if (param && param.text.includes("Exception ") && !param.text.includes("RuntimeException")) {
+      issues.push({
+        line: lineOf(node),
+        type: "warning",
+        message: "Catches the broad `Exception` type. Catching more specific exceptions is usually safer.",
+      });
+    }
   }
 
-  const forEach = trimmed.match(/^for\s*\(\s*[\w<>\[\]]+\s+([A-Za-z_$][\w$]*)\s*:\s*([A-Za-z_$][\w$]*)\s*\)/);
-  if (forEach) {
-    const info = symbolTable.get(forEach[2], scope);
-    const phrase = info && info.role === "list" ? `the \`${forEach[2]}\` list` : `\`${forEach[2]}\``;
-    return `Iterates over ${phrase}; on each pass, \`${forEach[1]}\` represents the current item.`;
+  if (node.type === "return_statement") {
+    const next = node.nextNamedSibling;
+    if (next && next.type !== "line_comment" && next.type !== "block_comment") {
+      issues.push({
+        line: lineOf(next),
+        type: "warning",
+        message: "This line comes right after a `return` in the same block, so it can never be reached.",
+      });
+    }
   }
 
-  if (/^for\s*\(/.test(trimmed)) return explainClassicForLoop(trimmed) || "Starts a counted loop that repeats a block of code a set number of times.";
-  if (/^while\s*\(/.test(trimmed)) return "Starts a while loop that keeps running while its condition stays true.";
-
-  const ifMatch = trimmed.match(/^if\s*\((.+)\)\s*\{?$/);
-  if (ifMatch) {
-    const condition = ifMatch[1].trim();
-    const known = symbolTable.knownIdentifiersIn(condition, scope);
-    if (known.length === 1 && condition === known[0]) return `Checks whether ${symbolTable.describe(known[0], scope)} meets the condition before running the code that follows.`;
-    return `Checks whether \`${condition}\` is true before running the code that follows.`;
-  }
-  if (/^\}?\s*else\b/.test(trimmed)) return "Defines the alternative block that runs when the previous condition is false.";
-
-  const ret = trimmed.match(/^return\b\s*(.*?);?$/);
-  if (ret) {
-    const value = ret[1].trim();
-    return value ? `Returns \`${value}\` from the current method.` : "Returns control from the current method (void).";
+  if (node.type === "binary_expression" && node.childForFieldName("operator")?.text === "==") {
+    const right = node.childForFieldName("right");
+    const left = node.childForFieldName("left");
+    if ((right && right.type === "string_literal") || (left && left.type === "string_literal")) {
+      issues.push({
+        line: lineOf(node),
+        type: "review",
+        message: "Compares a `String` using `==`, which checks reference equality, not content. Use `.equals()` instead.",
+      });
+    }
   }
 
-  const print = trimmed.match(/System\.out\.println?\s*\((.*)\)\s*;?$/);
-  if (print) return `Prints \`${print[1].trim()}\` to the console.`;
+  if (node.type === "method_invocation") {
+    const obj = node.childForFieldName("object");
+    const name = node.childForFieldName("name")?.text;
+    const argsNode = node.childForFieldName("arguments");
+    const hasConcat = argsNode && argsNode.namedChildren.some((a) => a.type === "binary_expression" && a.childForFieldName("operator")?.text === "+");
 
-  const decl = trimmed.match(/^(?:public|private|protected)?\s*(?:static\s+)?(?:final\s+)?([\w<>\[\], ]+?)\s+([A-Za-z_$][\w$]*)\s*=\s*(.+);/);
-  if (decl) {
-    const ternary = explainTernary(decl[2], decl[3]);
-    if (ternary) return ternary;
-    return `Declares a \`${decl[1].trim()}\` variable \`${decl[2]}\` and assigns it \`${decl[3]}\`.`;
+    if (obj && obj.text === "Runtime.getRuntime()" && name === "exec" && hasConcat) {
+      issues.push({
+        line: lineOf(node),
+        type: "security",
+        message: "`Runtime.exec()` is called with a concatenated string. If any part comes from user input, this is a command-injection risk — pass arguments as a `String[]` instead.",
+      });
+    }
+    if (name === "readObject") {
+      issues.push({
+        line: lineOf(node),
+        type: "security",
+        message: "Deserializing with `ObjectInputStream`/`readObject()` on untrusted data can lead to remote code execution. Avoid deserializing data from an untrusted source.",
+      });
+    }
   }
 
-  if (["}", "};"].includes(trimmed)) return "Closes the current code block.";
-
-  const incDec = explainIncrementDecrement(trimmed);
-  if (incDec) return incDec;
-
-  const augmented = explainAugmentedAssignment(trimmed, symbolTable, scope);
-  if (augmented) return augmented;
-
-  const tryCatch = explainBraceTryCatch(trimmed);
-  if (tryCatch) return tryCatch;
-
-  const bareCall = explainBareFunctionCall(trimmed, symbolTable, scope);
-  if (bareCall) return bareCall;
-
-  return genericFallbackExplanation();
+  if (node.type === "object_creation_expression") {
+    const type = node.childForFieldName("type")?.text;
+    const argsNode = node.childForFieldName("arguments");
+    const hasConcat = argsNode && argsNode.namedChildren.some((a) => a.type === "binary_expression" && a.childForFieldName("operator")?.text === "+");
+    if (type === "ProcessBuilder" && hasConcat) {
+      issues.push({
+        line: lineOf(node),
+        type: "security",
+        message: "`ProcessBuilder` is constructed with a concatenated argument. If any part comes from user input, this is a command-injection risk.",
+      });
+    }
+  }
 }
 
-export function findIssues(lines) {
-  const issues = findCommonIssues(lines);
+function checkUnusedVariables(scopeNode, issues) {
+  const assigned = new Map();
+  const identifierCounts = new Map();
 
-  lines.forEach((rawLine, index) => {
-    const line = rawLine.trim();
-    if (/catch\s*\(\s*Exception\s+\w+\s*\)/.test(line)) {
-      issues.push({ line: index + 1, type: "warning", message: "Catches the broad `Exception` type. Catching more specific exceptions is usually safer." });
+  function collect(node) {
+    if (node.type === "identifier") {
+      identifierCounts.set(node.text, (identifierCounts.get(node.text) || 0) + 1);
     }
-    if (/\bpublic\s+static\s+void\s+main\b/.test(line) === false && /==\s*"/.test(line)) {
-      issues.push({ line: index + 1, type: "review", message: "Compares a `String` using `==`, which checks reference equality, not content. Use `.equals()` instead." });
+    if (node.type === "variable_declarator") {
+      const name = node.childForFieldName("name");
+      if (name && !assigned.has(name.text)) assigned.set(name.text, lineOf(node));
+    }
+    for (const child of node.namedChildren) collect(child);
+  }
+  collect(scopeNode);
+
+  for (const [name, line] of assigned) {
+    if ((identifierCounts.get(name) || 0) <= 1) {
+      issues.push({
+        line,
+        type: "review",
+        message: `Variable \`${name}\` appears to be declared but may not be used later.`,
+      });
+    }
+  }
+}
+
+// ------------------------------------------------------------
+// Structure
+// ------------------------------------------------------------
+
+function updateStructure(node, structure) {
+  const lineNumber = lineOf(node);
+
+  if (node.type === "line_comment" || node.type === "block_comment") {
+    structure.comments.push(lineNumber);
+  } else if (node.type === "method_declaration") {
+    const nameNode = node.childForFieldName("name");
+    const paramsNode = node.childForFieldName("parameters");
+    structure.functions.push({
+      line: lineNumber,
+      name: nameNode ? nameNode.text : "?",
+      parameters: paramsNode ? paramsNode.text.slice(1, -1).trim() : "",
+    });
+  } else if (node.type === "class_declaration") {
+    const nameNode = node.childForFieldName("name");
+    structure.classes.push({ line: lineNumber, name: nameNode ? nameNode.text : "?" });
+  } else if (node.type === "import_declaration") {
+    structure.imports.push(lineNumber);
+  } else if (node.type === "variable_declarator") {
+    const name = node.childForFieldName("name");
+    if (name) structure.variables.push({ line: lineNumber, name: name.text });
+  } else if (node.type === "for_statement" || node.type === "enhanced_for_statement" || node.type === "while_statement") {
+    structure.loops.push(lineNumber);
+  } else if (node.type === "if_statement") {
+    structure.conditionals.push(lineNumber);
+  } else if (node.type === "return_statement") {
+    structure.returns.push(lineNumber);
+  } else if (node.type === "method_invocation" && node.childForFieldName("object")?.text === "System.out") {
+    structure.outputs.push(lineNumber);
+  }
+}
+
+// ------------------------------------------------------------
+// Single entry point
+// ------------------------------------------------------------
+
+export async function analyzeAst(code) {
+  await ensureReady();
+
+  const parser = new Parser();
+  parser.setLanguage(JavaLang);
+  const tree = parser.parse(code);
+  const root = tree.rootNode;
+
+  const structure = {
+    functions: [], classes: [], imports: [], variables: [],
+    loops: [], conditionals: [], returns: [], outputs: [], comments: [],
+  };
+  const issues = findCommonIssues(code.split("\n")).filter(
+    (issue) => !SUPERSEDED_MESSAGES.has(issue.message)
+  );
+  const lineExplanations = [];
+
+  function walk(node, symbols) {
+    updateStructure(node, structure);
+    checkIssues(node, issues);
+
+    if (node.type === "method_declaration" || node.type === "constructor_declaration") {
+      const explanation = explainNode(node, symbols);
+      if (explanation) lineExplanations.push({ line: lineOf(node), text: explanation });
+      const body = node.childForFieldName("body");
+      const localSymbols = buildSymbols(body);
+      checkUnusedVariables(body || node, issues);
+      for (const child of node.namedChildren) walk(child, localSymbols);
+      return;
     }
 
-    // Runtime.exec()/ProcessBuilder built from concatenation — a
-    // command-injection sink if any piece comes from user input.
-    if (/\bRuntime\.getRuntime\s*\(\s*\)\s*\.exec\s*\(/.test(line) && /\+/.test(line)) {
-      issues.push({ line: index + 1, type: "security", message: "`Runtime.exec()` is called with a concatenated string. If any part comes from user input, this is a command-injection risk — pass arguments as a `String[]` instead." });
-    }
-    if (/\bnew\s+ProcessBuilder\s*\(/.test(line) && /\+/.test(line)) {
-      issues.push({ line: index + 1, type: "security", message: "`ProcessBuilder` is constructed with a concatenated argument. If any part comes from user input, this is a command-injection risk." });
+    const explanation = explainNode(node, symbols);
+    if (explanation) {
+      lineExplanations.push({ line: lineOf(node), text: explanation });
     }
 
-    if (/\breadObject\s*\(\s*\)/.test(line)) {
-      issues.push({ line: index + 1, type: "security", message: "Deserializing with `ObjectInputStream`/`readObject()` on untrusted data can lead to remote code execution. Avoid deserializing data from an untrusted source." });
-    }
-  });
+    for (const child of node.namedChildren) walk(child, symbols);
+  }
 
-  return issues;
+  walk(root, buildSymbols(root));
+
+  lineExplanations.sort((a, b) => a.line - b.line);
+
+  return { structure, issues, lineExplanations };
 }
