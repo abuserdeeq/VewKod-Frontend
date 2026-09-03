@@ -139,7 +139,12 @@ function explainNode(node, symbols) {
         : `Defines the function \`${name}\` without parameters.`;
     }
 
-    case "variable_declaration": {
+    // `var` produces "variable_declaration"; `const`/`let` produce a
+    // DIFFERENT node type, "lexical_declaration" — a tree-sitter-
+    // javascript grammar quirk. Both wrap variable_declarator
+    // children identically, so one handler covers both.
+    case "variable_declaration":
+    case "lexical_declaration": {
       const declarator = node.namedChildren.find((c) => c.type === "variable_declarator");
       if (!declarator) return null;
       const keyword = declarationKind(node);
@@ -158,10 +163,11 @@ function explainNode(node, symbols) {
       // Destructuring: name is an object_pattern or array_pattern.
       if (name && (name.type === "object_pattern" || name.type === "array_pattern")) {
         const isObject = name.type === "object_pattern";
-        const names = name.namedChildren.map((c) => (c.type === "shorthand_property_identifier_pattern" ? c.text : c.text)).join(", ");
+        const rawNames = name.namedChildren.map((c) => c.text.replace(/^\.\.\./, ""));
+        const nameList = rawNames.map((n) => mdCode(n)).join(", ");
         return isObject
-          ? `Destructures ${mdCode(value ? value.text : "?")}, pulling out the ${names} propert${name.namedChildren.length === 1 ? "y" : "ies"} into new \`${keyword}\` variable(s).`
-          : `Destructures ${mdCode(value ? value.text : "?")} by position into new \`${keyword}\` variable(s): ${names}.`;
+          ? `Destructures ${mdCode(value ? value.text : "?")}, pulling out the ${nameList} propert${rawNames.length === 1 ? "y" : "ies"} into new \`${keyword}\` variable(s).`
+          : `Destructures ${mdCode(value ? value.text : "?")} by position into new \`${keyword}\` variable(s): ${nameList}.`;
       }
 
       if (!name || name.type !== "identifier") return null;
