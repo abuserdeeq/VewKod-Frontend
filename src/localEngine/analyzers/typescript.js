@@ -86,10 +86,12 @@ export async function analyzeAst(code) {
 
   function walk(node, symbols) {
     jsUpdateStructure(node, structure);
-    if (node.type === "interface_declaration" || node.type === "type_alias_declaration") {
-      const nameNode = node.childForFieldName("name");
-      structure.classes.push({ line: lineOf(node), name: nameNode ? nameNode.text : "?" });
-    }
+    // Interfaces/type-aliases deliberately NOT pushed into
+    // structure.classes — they aren't classes, and doing so made
+    // the Overview wrongly say e.g. "defines 3 classes" when only
+    // one was a real class. They still get their own explanation in
+    // the Line-by-Line section below; they just don't inflate the
+    // class count.
 
     jsCheckIssues(node, issues);
     checkTsIssues(node, issues);
