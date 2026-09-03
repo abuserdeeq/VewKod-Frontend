@@ -56,20 +56,72 @@ function typeRole(typeText) {
 // Per-method symbol tracking
 // ------------------------------------------------------------
 
+function getDeclaratorName(node) {
+  // Try multiple ways to find the variable name from a declarator
+  const name = node.childForFieldName("name");
+  if (name) return name;
+  // Fallback: find first identifier child
+  for (const child of node.namedChildren) {
+    if (child.type === "identifier") return child;
+  }
+  return null;
+}
+
+function getTypeNode(node) {
+  // Try field access first
+  const typeNode = node.childForFieldName("type");
+  if (typeNode) return typeNode;
+  // Fallback: first child that looks like a type
+  for (const child of node.namedChildren) {
+    if (child.type === "type_identifier" || child.type === "generic_type" || 
+        child.type === "array_type" || child.type === "integral_type" || 
+        child.type === "floating_point_type" || child.type === "boolean_type") {
+      return child;
+    }
+  }
+  return null;
+}
+
 function buildSymbols(scopeNode) {
   const symbols = new Map();
   function scan(node) {
+    // Handle local_variable_declaration (older tree-sitter-java versions)
     if (node.type === "local_variable_declaration") {
-      const typeNode = node.childForFieldName("type");
+      const typeNode = getTypeNode(node);
       const declarator = node.namedChildren.find((c) => c.type === "variable_declarator");
-      const name = declarator ? declarator.childForFieldName("name") : null;
+      const name = declarator ? getDeclaratorName(declarator) : null;
       if (name) {
         const role = typeRole(typeNode ? typeNode.text : "");
         if (role) symbols.set(name.text, role);
       }
     }
-    // Some versions of tree-sitter-java parse enhanced for as for_statement
-    if (node.type === "enhanced_for_statement" || (node.type === "for_statement" && node.childForFieldName("value"))) {
+    // Handle local_variable_declaration_statement (newer tree-sitter-java versions)
+    if (node.type === "local_variable_declaration_statement") {
+      const decl = node.namedChildren.find((c) => c.type === "local_variable_declaration");
+      if (decl) {
+        const typeNode = getTypeNode(decl);
+        const declarator = decl.namedChildren.find((c) => c.type === "variable_declarator");
+        const name = declarator ? getDeclaratorName(declarator) : null;
+        if (name) {
+          const role = typeRole(typeNode ? typeNode.text : "");
+          if (role) symbols.set(name.text, role);
+        }
+      }
+    }
+    // Handle formal parameters (method parameters)
+    if (node.type === "formal_parameter") {
+      const typeNode = getTypeNode(node);
+      const name = node.childForFieldName("name");
+      if (name) {
+        const role = typeRole(typeNode ? typeNode.text : "");
+        if (role) symbols.set(name.text, role);
+      }
+    }
+    if (node.type === "enhanced_for_statement") {
+      const name = node.childForFieldName("name");
+      if (name) symbols.set(name.text, "loop-item");
+    }
+    if (node.type === "for_statement" && node.childForFieldName("value")) {
       const name = node.childForFieldName("name");
       if (name) symbols.set(name.text, "loop-item");
     }
@@ -128,10 +180,26 @@ function explainNode(node, symbols) {
     }
 
     case "for_statement": {
-      // In some versions of tree-sitter-java, enhanced for loops are parsed as for_statement
+      // Some versions parse enhanced for as for_statement
       const value = node.childForFieldName("value");
       if (value) {
         const name = node.childForFieldName("name");
+        const valueText = value ? value.text : "?";
+        const role = value && value.type === "identifier" ? symbols.get(value.text) : null;
+        const phrase = role === "list" ? `the ${mdCode(valueText)} list` : mdCode(valueText);
+        return `Iterates over ${phrase}; on each pass, ${mdCode(name ? name.text : "?")} represents the current item.`;
+      }
+      // Fallback: detect enhanced for by text pattern (contains : but no ;)
+      const nodeText = node.text;
+      if (nodeText.includes(":") && !nodeText.includes(";")) {
+        const children = node.namedChildren;
+        let name = null, value = null;
+        for (const child of children) {
+          if (child.type === "identifier") {
+            if (!name) name = child;
+            else if (!value) value = child;
+          }
+        }
         const valueText = value ? value.text : "?";
         const role = value && value.type === "identifier" ? symbols.get(value.text) : null;
         const phrase = role === "list" ? `the ${mdCode(valueText)} list` : mdCode(valueText);
@@ -186,11 +254,17 @@ function explainNode(node, symbols) {
         : "Returns control from the current method (void).";
     }
 
-    case "local_variable_declaration": {
-      const typeNode = node.childForFieldName("type");
-      const declarator = node.namedChildren.find((c) => c.type === "variable_declarator");
+    case "local_variable_declaration":
+    case "local_variable_declaration_statement": {
+      let decl = node;
+      if (node.type === "local_variable_declaration_statement") {
+        decl = node.namedChildren.find((c) => c.type === "local_variable_declaration");
+      }
+      if (!decl) return null;
+      const typeNode = getTypeNode(decl);
+      const declarator = decl.namedChildren.find((c) => c.type === "variable_declarator");
       if (!declarator) return null;
-      const name = declarator.childForFieldName("name");
+      const name = getDeclaratorName(declarator);
       const value = declarator.childForFieldName("value");
       const typeText = typeNode ? typeNode.text : "var";
       return value
@@ -220,7 +294,7 @@ function explainNode(node, symbols) {
         }
         return args
           ? `Calls \`${name.text}()\` with the provided argument(s).`
-          : `Calls \`${name.text}()\` without arguments.`;
+          : `Calls \`${name.text}()\` without passing any arguments.`;
       }
 
       if (inner.type === "assignment_expression") {
