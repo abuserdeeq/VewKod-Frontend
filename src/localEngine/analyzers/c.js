@@ -1,79 +1,73 @@
-import { isCommentLineExcludingHash as isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainIncrementDecrement, explainTernary, explainClassicForLoop , explainBareFunctionCall , explainLoneOpenBrace } from "../shared/patterns.js";
+// ============================================================
+// C analyzer — Tree-sitter (AST) based
+// ============================================================
+// Same hybrid strategy as php.js: tree-sitter finds the *right
+// lines* (real statement/declaration boundaries, immune to string/
+// comment false positives that plagued the old regex scanner) but
+// the actual wording reuses the old regex-based analyzer's matchers
+// almost verbatim, run against just that one line's source text.
+// See php.js's header comment for the fuller rationale.
+//
+// cpp.js builds on top of this file the same way typescript.js
+// builds on javascript.js — C++ is a near-superset of C at the
+// text/regex level (same declaration/loop/if syntax), so its own
+// explainer tries the C++-specific patterns first and falls back to
+// this file's for everything else.
+
+import Parser from "web-tree-sitter";
+import {
+  isCommentLineExcludingHash as isCommentLine,
+  commentExplanation,
+  findCommonIssues,
+  explainAugmentedAssignment,
+  explainIncrementDecrement,
+  explainTernary,
+  explainClassicForLoop,
+  explainBareFunctionCall,
+} from "../shared/patterns.js";
 
 export const id = "c";
 export const label = "C";
 
-// Function-level scoping (see shared/patterns.js computeLineScopes):
-// C function bodies are brace-delimited.
-export const scopeStyle = "brace";
-export const functionStartRegex = /^(?:static\s+)?[\w]+\s*\*?\s*([A-Za-z_]\w*)\s*\(/;
+const isNode = typeof process !== "undefined" && !!process.versions?.node;
+
+const WASM_CORE_PATH = isNode
+  ? "./node_modules/web-tree-sitter/tree-sitter.wasm"
+  : "/wasm/tree-sitter.wasm";
+const WASM_C_PATH = isNode
+  ? "./node_modules/tree-sitter-wasms/out/tree-sitter-c.wasm"
+  : "/wasm/tree-sitter-c.wasm";
 
 export function detect(code) {
   return /#include\s*<.*\.h>/.test(code) || /\bprintf\s*\(/.test(code) || /#include\s*<stdio\.h>/.test(code);
 }
 
-export function buildSymbolTable(lines, symbolTable, lineScopes = []) {
-  lines.forEach((rawLine, index) => {
-    const line = rawLine.trim();
-    if (!line || isCommentLine(line)) return;
+let CLang = null;
+let ready = false;
 
-    const scope = lineScopes[index] || "global";
-
-    const fn = line.match(/^(?:static\s+)?[\w]+\s*\*?\s*([A-Za-z_]\w*)\s*\(([^)]*)\)\s*\{?$/);
-    if (fn && !/\b(if|for|while|switch|return)\b/.test(line)) {
-      symbolTable.add(fn[1], "function", { parameters: fn[2].trim() }, scope);
-      const fnScope = `${scope}>${fn[1]}#${index}`;
-      fn[2].split(",").map((p) => p.trim().split(/[\s*]+/).pop()).filter(Boolean).forEach((p) => symbolTable.add(p, "parameter", {}, fnScope));
-    }
-
-    const pointer = line.match(/^\w+\s*\*\s*([A-Za-z_]\w*)\s*=/);
-    if (pointer) symbolTable.add(pointer[1], "pointer", {}, scope);
-
-    const decl = line.match(/^(int|char|float|double|long|short)\s+([A-Za-z_]\w*)\s*=\s*(.+);/);
-    if (decl) {
-      const role = decl[1] === "char" ? "string" : "number";
-      symbolTable.add(decl[2], role, {}, scope);
-    }
-
-    const arrayDecl = line.match(/^\w+\s+([A-Za-z_]\w*)\s*\[\s*\d*\s*\]/);
-    if (arrayDecl) symbolTable.add(arrayDecl[1], "list", {}, scope);
-  });
-
-  return symbolTable;
+async function ensureReady() {
+  if (ready) return;
+  await Parser.init(isNode ? undefined : { locateFile: () => WASM_CORE_PATH });
+  CLang = await Parser.Language.load(WASM_C_PATH);
+  ready = true;
 }
 
-export function analyzeStructure(lines) {
-  const result = { functions: [], classes: [], imports: [], variables: [], loops: [], conditionals: [], returns: [], outputs: [], comments: [] };
-
-  lines.forEach((rawLine, index) => {
-    const lineNumber = index + 1;
-    const line = rawLine.trim();
-    if (!line) return;
-    if (isCommentLine(line)) result.comments.push(lineNumber);
-    if (/^#include\b/.test(line)) result.imports.push(lineNumber);
-
-    const fn = line.match(/^(?:static\s+)?[\w]+\s*\*?\s*([A-Za-z_]\w*)\s*\(([^)]*)\)\s*\{?$/);
-    if (fn && !/\b(if|for|while|switch|return)\b/.test(line)) result.functions.push({ line: lineNumber, name: fn[1], parameters: fn[2] });
-
-    const decl = line.match(/^(?:int|char|float|double|long|short)\s+([A-Za-z_]\w*)/);
-    if (decl) result.variables.push({ line: lineNumber, name: decl[1] });
-
-    if (/^(for|while)\s*\(/.test(line)) result.loops.push(lineNumber);
-    if (/^if\s*\(/.test(line) || /^else\b/.test(line)) result.conditionals.push(lineNumber);
-    if (/^return\b/.test(line)) result.returns.push(lineNumber);
-    if (/\bprintf\s*\(/.test(line)) result.outputs.push(lineNumber);
-  });
-
-  return result;
+export function lineOf(node) {
+  return node.startPosition.row + 1;
 }
 
-export function explainLine(rawLine, symbolTable, scope = "global") {
+// A multi-word C type: `struct Node *`, `unsigned long`, `const char *`.
+export const TYPE = "(?:const\\s+)?(?:struct\\s+[A-Za-z_]\\w*|unsigned\\s+\\w+|[A-Za-z_]\\w*)";
+
+// ------------------------------------------------------------
+// Per-line explanation — ported near-verbatim from the old
+// regex-based c.js.
+// ------------------------------------------------------------
+
+export function explainCLine(rawLine) {
   const trimmed = rawLine.trim();
   if (!trimmed) return null;
   if (isCommentLine(trimmed)) return commentExplanation();
-
-  const loneBrace = explainLoneOpenBrace(trimmed);
-  if (loneBrace) return loneBrace;
 
   if (/^#include\s*<(.+)>/.test(trimmed)) {
     const m = trimmed.match(/^#include\s*<(.+)>/);
@@ -83,12 +77,6 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   const structDecl = trimmed.match(/^struct\s+([A-Za-z_]\w*)\s*\{?$/);
   if (structDecl) return `Defines the \`${structDecl[1]}\` struct, which can hold a group of related fields.`;
 
-  // Function/return-type detection needs to accept multi-word types
-  // (`struct Node *`, `unsigned long`, `const char *`) — a single
-  // `[\w]+` was only ever matching one-word types like `int`/`void`,
-  // so any function returning a pointer-to-struct (extremely common
-  // in real C) fell straight through to the generic fallback.
-  const TYPE = "(?:const\\s+)?(?:struct\\s+[A-Za-z_]\\w*|unsigned\\s+\\w+|[A-Za-z_]\\w*)";
   const fn = trimmed.match(new RegExp(`^(?:static\\s+)?${TYPE}\\s*\\*?\\s*([A-Za-z_]\\w*)\\s*\\(([^)]*)\\)\\s*\\{?$`));
   if (fn && !/\b(if|for|while|switch|return)\b/.test(trimmed)) {
     return fn[2].trim()
@@ -100,11 +88,7 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   if (/^while\s*\(/.test(trimmed)) return "Starts a while loop that keeps running while its condition stays true.";
 
   const ifMatch = trimmed.match(/^if\s*\((.+)\)\s*\{?$/);
-  if (ifMatch) {
-    const known = symbolTable.knownIdentifiersIn(ifMatch[1], scope);
-    if (known.length === 1 && ifMatch[1].trim() === known[0]) return `Checks whether ${symbolTable.describe(known[0], scope)} is non-zero before running the code that follows.`;
-    return `Checks whether \`${ifMatch[1].trim()}\` is true before running the code that follows.`;
-  }
+  if (ifMatch) return `Checks whether \`${ifMatch[1].trim()}\` is true before running the code that follows.`;
   if (/^else\b/.test(trimmed)) return "Defines the alternative block that runs when the previous condition is false.";
 
   const ret = trimmed.match(/^return\b\s*(.*?);?$/);
@@ -119,10 +103,6 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
   const pointer = trimmed.match(new RegExp(`^${TYPE}\\s*\\*\\s*([A-Za-z_]\\w*)\\s*=\\s*(.+);`));
   if (pointer) return `Declares the pointer \`${pointer[1]}\` and points it at \`${pointer[2]}\`.`;
 
-  // `ptr->field = value;` — assignment through a pointer to a struct
-  // member. Worth calling out `->` specifically (rather than treating
-  // it as an ordinary assignment) since dereferencing through a bad
-  // pointer here is a classic C crash/undefined-behavior source.
   const arrowAssign = trimmed.match(/^([A-Za-z_]\w*)->([A-Za-z_]\w*)\s*=\s*(.+);$/);
   if (arrowAssign) return `Sets the \`${arrowAssign[2]}\` field of the struct that \`${arrowAssign[1]}\` points to, to \`${arrowAssign[3].trim()}\`.`;
 
@@ -133,15 +113,9 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
     return `Declares a \`${decl[1]}\` variable \`${decl[2]}\` and assigns it \`${decl[3]}\`.`;
   }
 
-  // Plain reassignment of an already-declared variable (`current = next;`)
-  // — no type keyword, so it wouldn't match the typed-declaration rule
-  // above, and previously had no rule of its own at all.
   const reassign = trimmed.match(/^([A-Za-z_]\w*)\s*=\s*(.+);$/);
   if (reassign) return `Sets \`${reassign[1]}\` to \`${reassign[2].trim()}\`.`;
 
-  // Bare declaration, no initializer (`int value;`, `struct Node *next;`)
-  // — this is how every struct field is written, so without it, every
-  // field in every struct fell to the generic fallback.
   const bareDecl = trimmed.match(new RegExp(`^${TYPE}\\s*(\\*)?\\s*([A-Za-z_]\\w*)\\s*;$`));
   if (bareDecl) {
     const [, star, name] = bareDecl;
@@ -150,49 +124,134 @@ export function explainLine(rawLine, symbolTable, scope = "global") {
       : `Declares the variable \`${name}\` (not yet initialized/assigned).`;
   }
 
-  if (["}", "};"].includes(trimmed)) return "Closes the current code block.";
-
   const incDec = explainIncrementDecrement(trimmed);
   if (incDec) return incDec;
 
-  const augmented = explainAugmentedAssignment(trimmed, symbolTable, scope);
+  const augmented = explainAugmentedAssignment(trimmed, { knownIdentifiersIn: () => [], describe: (n) => `\`${n}\`` }, "global");
   if (augmented) return augmented;
 
-  const bareCall = explainBareFunctionCall(trimmed, symbolTable, scope);
+  const bareCall = explainBareFunctionCall(trimmed, { knownIdentifiersIn: () => [], describe: (n) => `\`${n}\``, get: () => null }, "global");
   if (bareCall) return bareCall;
 
-  return genericFallbackExplanation();
+  return null;
 }
 
-export function findIssues(lines, symbolTable) {
-  const issues = findCommonIssues(lines);
+// ------------------------------------------------------------
+// Issue checks
+// ------------------------------------------------------------
+
+export function checkCLineIssues(rawLine, lineNumber, issues) {
+  const line = rawLine.trim();
+  if (/\bgets\s*\(/.test(line)) {
+    issues.push({ line: lineNumber, type: "security", message: "`gets()` cannot bound how much input it reads and is unsafe; use `fgets()` instead." });
+  }
+  if (/\bstrcpy\s*\(/.test(line)) {
+    issues.push({ line: lineNumber, type: "security", message: "`strcpy()` does not check buffer size and can overflow; consider `strncpy()`." });
+  }
+  if (/\bsprintf\s*\(/.test(line)) {
+    issues.push({ line: lineNumber, type: "security", message: "`sprintf()` writes without checking buffer size and can overflow; use `snprintf()` with an explicit size instead." });
+  }
+  const systemCall = line.match(/\bsystem\s*\((.+)\)\s*;?$/);
+  if (systemCall && !/^".*"$/.test(systemCall[1].trim())) {
+    issues.push({ line: lineNumber, type: "security", message: "`system()` is called with a non-literal argument. If any part comes from user input, this is a command-injection risk." });
+  }
+}
+
+export function checkMallocFree(lines, issues) {
   const mallocLines = [];
   let hasFree = false;
-
   lines.forEach((rawLine, index) => {
     const line = rawLine.trim();
     if (/\bmalloc\s*\(/.test(line) || /\bcalloc\s*\(/.test(line)) mallocLines.push(index + 1);
     if (/\bfree\s*\(/.test(line)) hasFree = true;
-    if (/\bgets\s*\(/.test(line)) {
-      issues.push({ line: index + 1, type: "security", message: "`gets()` cannot bound how much input it reads and is unsafe; use `fgets()` instead." });
-    }
-    if (/\bstrcpy\s*\(/.test(line)) {
-      issues.push({ line: index + 1, type: "security", message: "`strcpy()` does not check buffer size and can overflow; consider `strncpy()`." });
-    }
-    if (/\bsprintf\s*\(/.test(line)) {
-      issues.push({ line: index + 1, type: "security", message: "`sprintf()` writes without checking buffer size and can overflow; use `snprintf()` with an explicit size instead." });
-    }
-    const cSystemCall = line.match(/\bsystem\s*\((.+)\)\s*;?$/);
-    if (cSystemCall && !/^".*"$/.test(cSystemCall[1].trim())) {
-      issues.push({ line: index + 1, type: "security", message: "`system()` is called with a non-literal argument. If any part comes from user input, this is a command-injection risk." });
-    }
   });
-
   if (mallocLines.length && !hasFree) {
     mallocLines.forEach((line) =>
       issues.push({ line, type: "warning", message: "Memory allocated here (`malloc`/`calloc`) doesn't appear to be released with a matching `free()` anywhere in this snippet." })
     );
   }
+}
 
-  return issues;
+// ------------------------------------------------------------
+// Structure
+// ------------------------------------------------------------
+
+export function updateCStructure(node, rawLine, structure) {
+  const lineNumber = lineOf(node);
+  const trimmed = rawLine.trim();
+
+  if (node.type === "comment") {
+    structure.comments.push(lineNumber);
+    return;
+  }
+  if (/^#include\b/.test(trimmed)) {
+    structure.imports.push(lineNumber);
+  } else if (node.type === "function_definition") {
+    const fn = trimmed.match(new RegExp(`^(?:static\\s+)?${TYPE}\\s*\\*?\\s*([A-Za-z_]\\w*)\\s*\\(([^)]*)\\)`));
+    if (fn) structure.functions.push({ line: lineNumber, name: fn[1], parameters: fn[2] });
+  } else if (node.type === "struct_specifier") {
+    const cls = trimmed.match(/\bstruct\s+([A-Za-z_]\w*)/);
+    if (cls) structure.classes.push({ line: lineNumber, name: cls[1] });
+  } else if (node.type === "declaration" || node.type === "init_declarator") {
+    const decl = trimmed.match(/^(?:int|char|float|double|long|short)\s+([A-Za-z_]\w*)/);
+    if (decl) structure.variables.push({ line: lineNumber, name: decl[1] });
+  } else if (node.type === "for_statement" || node.type === "while_statement") {
+    structure.loops.push(lineNumber);
+  } else if (node.type === "if_statement") {
+    structure.conditionals.push(lineNumber);
+  } else if (node.type === "return_statement") {
+    structure.returns.push(lineNumber);
+  } else if (/\bprintf\s*\(/.test(trimmed)) {
+    structure.outputs.push(lineNumber);
+  }
+}
+
+// ------------------------------------------------------------
+// Single entry point
+// ------------------------------------------------------------
+
+export async function analyzeAst(code) {
+  await ensureReady();
+
+  const parser = new Parser();
+  parser.setLanguage(CLang);
+  const tree = parser.parse(code);
+  const root = tree.rootNode;
+  const lines = code.split("\n");
+
+  const structure = {
+    functions: [], classes: [], imports: [], variables: [],
+    loops: [], conditionals: [], returns: [], outputs: [], comments: [],
+  };
+  const issues = findCommonIssues(lines);
+  checkMallocFree(lines, issues);
+
+  const lineExplanations = [];
+  const explainedLines = new Set();
+  const issueCheckedLines = new Set();
+
+  function walk(node) {
+    const lineNumber = lineOf(node);
+    const rawLine = lines[lineNumber - 1] || "";
+
+    updateCStructure(node, rawLine, structure);
+    if (!issueCheckedLines.has(lineNumber)) {
+      checkCLineIssues(rawLine, lineNumber, issues);
+      issueCheckedLines.add(lineNumber);
+    }
+    if (!explainedLines.has(lineNumber)) {
+      const text = explainCLine(rawLine);
+      if (text) {
+        lineExplanations.push({ line: lineNumber, text });
+        explainedLines.add(lineNumber);
+      }
+    }
+
+    for (const child of node.namedChildren) walk(child);
+  }
+
+  walk(root);
+  lineExplanations.sort((a, b) => a.line - b.line);
+
+  return { structure, issues, lineExplanations };
 }
