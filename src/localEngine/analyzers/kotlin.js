@@ -65,6 +65,22 @@ function findName(node, types = ["simple_identifier", "type_identifier"]) {
   return nameNode ? nameNode.text : "?";
 }
 
+// Finds the initializer expression after `=` in a property_declaration
+// by scanning ALL children (node.children), not just namedChildren.
+// BUG FIX (found via CI, not the local sandbox — see file header):
+// `null` is apparently an anonymous token in tree-sitter-kotlin's
+// grammar, so `var x: String? = null` has only ONE namedChild
+// (variable_declaration) — namedChildren[last] silently returned the
+// declaration itself instead of the value, so declarations
+// initialized to `null` got no line explanation at all. Walking all
+// children and locating the literal `=` token is immune to whichever
+// literals the grammar treats as anonymous.
+function findInitializer(node) {
+  const children = node.children;
+  const eqIndex = children.findIndex((c) => c.type === "=");
+  return eqIndex !== -1 ? children[eqIndex + 1] : null;
+}
+
 function literalRole(node) {
   if (!node) return null;
   if (node.type === "call_expression" && /^(listOf|mutableListOf|arrayListOf)$/.test(node.namedChildren[0]?.text || "")) return "list";
@@ -85,7 +101,7 @@ function buildSymbols(scopeNode) {
     if (node.type === "property_declaration") {
       const decl = node.namedChildren.find((c) => c.type === "variable_declaration");
       const name = decl ? decl.namedChildren.find((c) => c.type === "simple_identifier") : null;
-      const value = node.namedChildren[node.namedChildren.length - 1];
+      const value = findInitializer(node);
       const role = literalRole(value);
       if (name && role) symbols.set(name.text, role);
     }
@@ -183,10 +199,10 @@ function explainNode(node, symbols) {
     case "property_declaration": {
       const decl = node.namedChildren.find((c) => c.type === "variable_declaration");
       const name = decl ? decl.namedChildren.find((c) => c.type === "simple_identifier") : null;
-      const value = node.namedChildren[node.namedChildren.length - 1];
+      const value = findInitializer(node);
       const isVal = /^val\b/.test(node.text.trim());
       const kind = isVal ? "read-only" : "mutable";
-      if (!name || value === decl) return null;
+      if (!name || !value) return null;
       return `Declares the ${kind} property ${mdCode(name.text)} and assigns it ${mdCode(value.text)}.`;
     }
 

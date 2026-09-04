@@ -66,6 +66,21 @@ function typeKindLabel(node) {
   return "class";
 }
 
+// Finds the initializer expression after `=` in a property_declaration
+// by scanning ALL children (node.children), not just namedChildren.
+// DEFENSIVE FIX: CI testing surfaced the Kotlin equivalent of this bug
+// (`null` is an anonymous token in that grammar, so namedChildren
+// skipped it entirely — see kotlin.js). Swift's own tests passed, but
+// applying the same fix here too in case `nil` is anonymous in some
+// grammar versions: relying on namedChildren[last] silently picks the
+// wrong node (or the declaration itself) whenever the actual value is
+// an anonymous token.
+function findInitializer(node) {
+  const children = node.children;
+  const eqIndex = children.findIndex((c) => c.type === "=");
+  return eqIndex !== -1 ? children[eqIndex + 1] : null;
+}
+
 function literalRole(node) {
   if (!node) return null;
   if (node.type === "dictionary_literal") return "dict";
@@ -85,7 +100,7 @@ function buildSymbols(scopeNode) {
   function scan(node) {
     if (node.type === "property_declaration") {
       const pattern = node.namedChildren.find((c) => c.type === "pattern" || c.type === "simple_identifier");
-      const value = node.namedChildren[node.namedChildren.length - 1];
+      const value = findInitializer(node);
       const role = literalRole(value);
       if (pattern && role) symbols.set(pattern.text, role);
     }
@@ -193,8 +208,8 @@ function explainNode(node, symbols) {
     case "property_declaration": {
       const patternNode = node.namedChildren.find((c) => c.type === "pattern");
       const name = patternNode ? patternNode.text : (node.namedChildren.find((c) => c.type === "simple_identifier")?.text || "?");
-      const value = node.namedChildren[node.namedChildren.length - 1];
-      if (!value || value === patternNode) return null;
+      const value = findInitializer(node);
+      if (!value) return null;
       const isLet = /^let\b/.test(node.text.trim());
       const kind = isLet ? "constant" : "variable";
 
