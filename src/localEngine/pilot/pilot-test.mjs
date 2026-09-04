@@ -1,31 +1,24 @@
 // Run: node src/localEngine/pilot/pilot-test.mjs
 //
 // Tests every language pilot currently under development (Python,
-// JavaScript, TypeScript, and PHP graduated to production — see
-// src/localEngine/analyzers/{python,javascript,typescript,php}.js —
-// so none of them are tested here anymore). Not part of the app or
-// the test suite — paste whatever this prints back into the chat.
+// JavaScript, TypeScript, PHP, Java, C#, C, and C++ graduated to
+// production — see src/localEngine/analyzers/{python,javascript,
+// typescript,php,java,csharp,c,cpp}.js — so none of them are tested
+// here anymore). Not part of the app or the test suite — paste
+// whatever this prints back into the chat.
 
 import fs from "node:fs";
 import { analyzeGoAst } from "./goTreeSitter.js";
 import { analyzeRustAst } from "./rustTreeSitter.js";
-import { analyzeJavaAst } from "./javaTreeSitter.js";
-import { analyzeCSharpAst } from "./csharpTreeSitter.js";
 import { analyzeKotlinAst } from "./kotlinTreeSitter.js";
 import { analyzeSwiftAst } from "./swiftTreeSitter.js";
-import { analyzeCAst } from "./cTreeSitter.js";
-import { analyzeCppAst } from "./cppTreeSitter.js";
 import { analyzeBashAst } from "./bashTreeSitter.js";
 
 const wasmPaths = {
   go: "./node_modules/tree-sitter-wasms/out/tree-sitter-go.wasm",
   rust: "./node_modules/tree-sitter-wasms/out/tree-sitter-rust.wasm",
-  java: "./node_modules/tree-sitter-wasms/out/tree-sitter-java.wasm",
-  csharp: "./node_modules/tree-sitter-wasms/out/tree-sitter-c_sharp.wasm",
   kotlin: "./node_modules/tree-sitter-wasms/out/tree-sitter-kotlin.wasm",
   swift: "./node_modules/tree-sitter-wasms/out/tree-sitter-swift.wasm",
-  c: "./node_modules/tree-sitter-wasms/out/tree-sitter-c.wasm",
-  cpp: "./node_modules/tree-sitter-wasms/out/tree-sitter-cpp.wasm",
   bash: "./node_modules/tree-sitter-wasms/out/tree-sitter-bash.wasm",
 };
 
@@ -74,55 +67,6 @@ await runSamples("RUST", analyzeRustAst, {
 `,
 }, wasmPaths);
 
-// ---------------- Java ----------------
-await runSamples("JAVA", analyzeJavaAst, {
-  "unreachable + empty catch": `public class PaymentProcessor {
-    public double calculateFee(double amount, int count) {
-        if (count > 0) {
-            return amount / count;
-            System.out.println("This will never run");
-        }
-        return amount / 0;
-    }
-    public double processOrder(Order order) {
-        try {
-            return chargeCard(order);
-        } catch (Exception e) {
-        }
-        return 0;
-    }
-}
-`,
-}, wasmPaths);
-
-// ---------------- C# ----------------
-await runSamples("C#", analyzeCSharpAst, {
-  "unreachable + empty catch (Allman style)": `public class PaymentProcessor
-{
-    public double CalculateFee(double amount, int count)
-    {
-        if (count > 0)
-        {
-            return amount / count;
-            Console.WriteLine("This will never run");
-        }
-        return amount / 0;
-    }
-    public double ProcessOrder(Order order)
-    {
-        try
-        {
-            return ChargeCard(order);
-        }
-        catch (Exception e)
-        {
-        }
-        return 0;
-    }
-}
-`,
-}, wasmPaths);
-
 // ---------------- Kotlin ----------------
 await runSamples("KOTLIN", analyzeKotlinAst, {
   "unreachable + empty catch": `fun calculateFee(amount: Double, count: Int): Double {
@@ -157,41 +101,6 @@ func processOrder(order: Order) -> Bool {
     } catch {
     }
 }
-`,
-}, wasmPaths);
-
-// ---------------- C ----------------
-await runSamples("C", analyzeCAst, {
-  "unreachable (no catch/classes in C)": `double calculate_fee(double amount, int count) {
-    if (count > 0) {
-        return amount / count;
-        printf("This will never run\\n");
-    }
-    return amount / 0;
-}
-`,
-}, wasmPaths);
-
-// ---------------- C++ ----------------
-await runSamples("C++", analyzeCppAst, {
-  "unreachable + empty catch + class": `class PaymentProcessor {
-public:
-    double calculateFee(double amount, int count) {
-        if (count > 0) {
-            return amount / count;
-            std::cout << "This will never run";
-        }
-        return amount / 0;
-    }
-
-    double processOrder(Order order) {
-        try {
-            return chargeCard(order);
-        } catch (const std::exception& e) {
-        }
-        return 0;
-    }
-};
 `,
 }, wasmPaths);
 
