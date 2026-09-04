@@ -1,11 +1,11 @@
 name: Tree-sitter Pilot Test
 
 # Manually triggered (no push/PR needed) — this exists so the
-# tree-sitter pilots for the remaining languages (Go, Rust, Java, C#,
-# Kotlin, Swift, C, C++, Bash — under src/localEngine/pilot/) can be
-# tried out entirely on GitHub's servers, from a phone browser, with
-# no local terminal or npm install required. Python, JavaScript,
-# TypeScript, and PHP already graduated out of this pilot into
+# tree-sitter pilots for the remaining languages (Go, Rust, Kotlin,
+# Swift, Bash — under src/localEngine/pilot/) can be tried out
+# entirely on GitHub's servers, from a phone browser, with no local
+# terminal or npm install required. Python, JavaScript, TypeScript,
+# PHP, Java, C#, C, and C++ already graduated out of this pilot into
 # production (src/localEngine/analyzers/) and are covered by the
 # regular test suite instead. Tap "Run workflow" on this page, wait
 # for it to finish, then open the run and read the "Run pilot test"
