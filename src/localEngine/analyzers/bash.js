@@ -69,14 +69,24 @@ function isReturnCommand(node) {
   return false;
 }
 
+// Some "command" nodes get an explicit `name` field from the grammar;
+// others (e.g. a bare word like `backup_files` with no arguments) don't,
+// and the name is just the first named child. commandName() and
+// commandArgs() must resolve the name node the same way, or the name
+// ends up double-counted as one of its own arguments.
+function commandNameNode(node) {
+  return node.childForFieldName("name") || node.namedChildren[0];
+}
+
 function commandName(node) {
-  const nameNode = node.childForFieldName("name") || node.namedChildren[0];
+  const nameNode = commandNameNode(node);
   return nameNode ? nameNode.text : "?";
 }
 
 function commandArgs(node) {
+  const nameNode = commandNameNode(node);
   return node.namedChildren
-    .filter((c) => c !== node.childForFieldName("name"))
+    .filter((c) => c !== nameNode)
     .map((c) => c.text)
     .join(" ")
     .trim();
