@@ -1,191 +1,361 @@
-import { isCommentLine, commentExplanation, findCommonIssues, genericFallbackExplanation, explainAugmentedAssignment, explainTernary , explainBareFunctionCall , explainLoneOpenBrace } from "../shared/patterns.js";
+// ============================================================
+// Swift analyzer — Tree-sitter (AST) based
+// ============================================================
+// Same architecture as python.js/java.js: single async
+// analyzeAst(code) entry point. Replaces the old regex/
+// indentation-based analyzer entirely and folds in what was
+// pilot/swiftTreeSitter.js.
+//
+// CONFIDENCE NOTES (carried over + extended from the pilot):
+// alex-pinkus/tree-sitter-swift is more field-annotated than
+// Kotlin's grammar — the pilot's function_declaration/
+// class_declaration name lookups used childForFieldName("name")
+// directly and worked, and an empty catch_block's only named child
+// is catch_keyword (confirmed via inspect-ast.mjs). Struct/enum/
+// protocol/extension declarations, guard/if-let optional binding,
+// nil-coalescing, and force-unwrap below are unverified
+// extrapolations from the grammar's public docs — run
+// `node src/localEngine/pilot/inspect-ast.mjs` after `npm install`
+// to confirm before trusting this in production.
+
+import Parser from "web-tree-sitter";
+import { findCommonIssues, mdCode } from "../shared/patterns.js";
 
 export const id = "swift";
 export const label = "Swift";
 
-// Function-level scoping (see shared/patterns.js computeLineScopes):
-// Swift function bodies are brace-delimited.
-export const scopeStyle = "brace";
-export const functionStartRegex = /^func\s+([A-Za-z_]\w*)\s*\(/;
+const isNode = typeof process !== "undefined" && !!process.versions?.node;
+
+const WASM_CORE_PATH = isNode
+  ? "./node_modules/web-tree-sitter/tree-sitter.wasm"
+  : "/wasm/tree-sitter.wasm";
+const WASM_SWIFT_PATH = isNode
+  ? "./node_modules/tree-sitter-wasms/out/tree-sitter-swift.wasm"
+  : "/wasm/tree-sitter-swift.wasm";
 
 export function detect(code) {
   return /\bimport\s+(Foundation|UIKit|SwiftUI)\b/.test(code) || (/\b(let|var)\s+\w+/.test(code) && /\bfunc\s+\w+/.test(code));
 }
 
-function literalRole(value) {
-  const v = value.trim();
-  if (/^\[.*:.*\]$/s.test(v)) return "dict";
-  if (/^\[.*\]$/s.test(v)) return "list";
-  if (/^".*"$/.test(v)) return "string";
-  if (/^(true|false)$/.test(v)) return "boolean";
-  if (/^-?\d+(\.\d+)?$/.test(v)) return "number";
-  return "variable";
+let SwiftLang = null;
+let ready = false;
+
+async function ensureReady() {
+  if (ready) return;
+  await Parser.init(isNode ? undefined : { locateFile: () => WASM_CORE_PATH });
+  SwiftLang = await Parser.Language.load(WASM_SWIFT_PATH);
+  ready = true;
 }
 
-export function buildSymbolTable(lines, symbolTable, lineScopes = []) {
-  lines.forEach((rawLine, index) => {
-    const line = rawLine.trim();
-    if (!line || isCommentLine(line)) return;
-
-    const scope = lineScopes[index] || "global";
-
-    const fn = line.match(/^func\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/);
-    if (fn) {
-      symbolTable.add(fn[1], "function", { parameters: fn[2].trim() }, scope);
-      const fnScope = `${scope}>${fn[1]}#${index}`;
-      fn[2].split(",").map((p) => p.trim().split(/\s*:\s*/)[0].split(/\s+/).pop()).filter(Boolean).forEach((p) => symbolTable.add(p, "parameter", {}, fnScope));
-    }
-
-    const cls = line.match(/\b(?:class|struct)\s+([A-Za-z_]\w*)/);
-    if (cls) symbolTable.add(cls[1], "class", {}, scope);
-
-    const decl = line.match(/^(let|var)\s+([A-Za-z_]\w*)\s*(?::\s*[\w<>\[\]?]+)?\s*=\s*(.+)$/);
-    if (decl) symbolTable.add(decl[2], literalRole(decl[3]), {}, scope);
-
-    const forLoop = line.match(/^for\s+([A-Za-z_]\w*)\s+in\s+([A-Za-z_]\w*)/);
-    if (forLoop) {
-      const info = symbolTable.get(forLoop[2], scope);
-      symbolTable.add(forLoop[1], "loop-item", { of: forLoop[2], ofType: info ? info.role : "collection" }, scope);
-    }
-  });
-
-  return symbolTable;
+function lineOf(node) {
+  return node.startPosition.row + 1;
 }
 
-export function analyzeStructure(lines) {
-  const result = { functions: [], classes: [], imports: [], variables: [], loops: [], conditionals: [], returns: [], outputs: [], comments: [] };
+// GUESS: struct/enum/protocol/extension declarations may be their
+// own node types rather than sharing "class_declaration" — checked
+// as a set so any of these still gets picked up structurally even
+// if the exact split from the grammar differs from this guess.
+const TYPE_DECL_TYPES = new Set(["class_declaration", "struct_declaration", "enum_declaration", "protocol_declaration"]);
 
-  lines.forEach((rawLine, index) => {
-    const lineNumber = index + 1;
-    const line = rawLine.trim();
-    if (!line) return;
-    if (isCommentLine(line)) result.comments.push(lineNumber);
-    if (/^import\s+\w+/.test(line)) result.imports.push(lineNumber);
-
-    const fn = line.match(/^func\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/);
-    if (fn) result.functions.push({ line: lineNumber, name: fn[1], parameters: fn[2] });
-
-    const cls = line.match(/\b(?:class|struct)\s+([A-Za-z_]\w*)/);
-    if (cls) result.classes.push({ line: lineNumber, name: cls[1] });
-
-    const decl = line.match(/^(?:let|var)\s+([A-Za-z_]\w*)/);
-    if (decl) result.variables.push({ line: lineNumber, name: decl[1] });
-
-    if (/^(for|while)\b/.test(line)) result.loops.push(lineNumber);
-    if (/^if\b/.test(line) || /^else\b/.test(line) || /^switch\b/.test(line)) result.conditionals.push(lineNumber);
-    if (/^return\b/.test(line)) result.returns.push(lineNumber);
-    if (/\bprint\s*\(/.test(line)) result.outputs.push(lineNumber);
-  });
-
-  return result;
+function typeKindLabel(node) {
+  const first = node.child(0)?.text;
+  if (first === "struct") return "struct";
+  if (first === "enum") return "enum";
+  if (first === "protocol") return "protocol";
+  if (first === "extension") return "extension";
+  return "class";
 }
 
-export function explainLine(rawLine, symbolTable, scope = "global") {
-  const trimmed = rawLine.trim();
-  if (!trimmed) return null;
-  if (isCommentLine(trimmed)) return commentExplanation();
-
-  const loneBrace = explainLoneOpenBrace(trimmed);
-  if (loneBrace) return loneBrace;
-
-  if (/^import\s+\w+/.test(trimmed)) return "Imports a framework so its types/functions can be used in this file.";
-
-  const cls = trimmed.match(/\b(class|struct)\s+([A-Za-z_]\w*)/);
-  if (cls) return `Defines the ${cls[1]} \`${cls[2]}\`, which can serve as a blueprint for creating objects.`;
-
-  const fn = trimmed.match(/^func\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/);
-  if (fn) {
-    return fn[2].trim()
-      ? `Defines the function \`${fn[1]}\`, which accepts \`${fn[2].trim()}\` as parameter(s).`
-      : `Defines the function \`${fn[1]}\` without parameters.`;
-  }
-
-  const forLoop = trimmed.match(/^for\s+([A-Za-z_]\w*)\s+in\s+([A-Za-z_]\w*)/);
-  if (forLoop) {
-    const info = symbolTable.get(forLoop[2], scope);
-    const phrase = info && info.role === "list" ? `the \`${forLoop[2]}\` array` : `\`${forLoop[2]}\``;
-    return `Iterates over ${phrase}; on each pass, \`${forLoop[1]}\` represents the current item.`;
-  }
-  if (/^while\s+/.test(trimmed)) return "Starts a while loop that keeps running while its condition stays true.";
-
-  // `guard let`/`guard` — Swift's "early exit" construct: unlike `if`,
-  // the bound value stays in scope for the REST of the enclosing
-  // function, and the `else` branch is required to leave (return/break/
-  // continue/throw). Handled before the generic `if` rule below since
-  // it's a completely different control-flow shape, not a plain condition.
-  const guardLet = trimmed.match(/^guard\s+let\s+([A-Za-z_]\w*)\s*=\s*(.+?)\s*else\s*\{?$/);
-  if (guardLet) {
-    const [, name, expr] = guardLet;
-    return `Unwraps \`${expr.trim()}\`; if it's \`nil\`, runs the \`else\` block below (which must exit this function), otherwise makes the value available as \`${name}\` for the rest of the function (Swift's \`guard let\`).`;
-  }
-  const guardMatch = trimmed.match(/^guard\s+(.+?)\s*else\s*\{?$/);
-  if (guardMatch) return `Checks whether \`${guardMatch[1].trim()}\` is true; if not, runs the \`else\` block below (which must exit this function) — Swift's early-exit \`guard\`.`;
-
-  // `if let`/`if var` optional binding — also not a boolean check, so
-  // it needs its own wording rather than falling into the generic
-  // `if` rule (which would misleadingly say "is true").
-  const ifLet = trimmed.match(/^if\s+(?:let|var)\s+([A-Za-z_]\w*)\s*=\s*(.+?)\s*\{?$/);
-  if (ifLet) {
-    const [, name, expr] = ifLet;
-    return `If \`${expr.trim()}\` isn't \`nil\`, unwraps it and makes it available as \`${name}\` inside this block (Swift's optional binding).`;
-  }
-
-  const ifMatch = trimmed.match(/^if\s+(.+?)\s*\{?$/);
-  if (ifMatch) {
-    const condition = ifMatch[1].trim();
-    const known = symbolTable.knownIdentifiersIn(condition, scope);
-    if (known.length === 1 && condition === known[0]) return `Checks whether ${symbolTable.describe(known[0], scope)} meets the condition before running the code that follows.`;
-    return `Checks whether \`${condition}\` is true before running the code that follows.`;
-  }
-  if (/^\}?\s*else\b/.test(trimmed)) return "Defines the alternative block that runs when the previous condition is false.";
-  if (/^switch\s+/.test(trimmed)) return "Starts a switch statement that picks a branch based on the value.";
-
-  const ret = trimmed.match(/^return\b\s*(.*)$/);
-  if (ret) return ret[1].trim() ? `Returns \`${ret[1].trim()}\` from the current function.` : "Returns control from the current function.";
-
-  const print = trimmed.match(/\bprint\s*\((.*)\)\s*$/);
-  if (print) return `Prints \`${print[1].trim()}\` to the console.`;
-
-  const decl = trimmed.match(/^(let|var)\s+([A-Za-z_]\w*)\s*(?::\s*[\w<>\[\]?]+)?\s*=\s*(.+)$/);
-  if (decl) {
-    const kind = decl[1] === "let" ? "constant" : "variable";
-    const ternary = explainTernary(decl[2], decl[3]);
-    if (ternary) return ternary;
-
-    // Nil-coalescing (`a ?? b`): worth calling out specifically since
-    // `??` reads very differently from a normal assignment — it's
-    // "unwrap-or-default", not just "assign this whole expression".
-    const nilCoalesce = decl[3].match(/^(.+?)\s*\?\?\s*(.+?);?$/);
-    if (nilCoalesce) {
-      return `Declares the ${kind} \`${decl[2]}\`: uses \`${nilCoalesce[1].trim()}\` if it isn't \`nil\`, otherwise falls back to \`${nilCoalesce[2].trim()}\` (Swift's nil-coalescing \`??\`).`;
-    }
-
-    return `Declares the ${kind} \`${decl[2]}\` and assigns it \`${decl[3]}\`.`;
-  }
-
-  if (["}", "};"].includes(trimmed)) return "Closes the current code block.";
-
-  const augmented = explainAugmentedAssignment(trimmed, symbolTable, scope);
-  if (augmented) return augmented;
-
-  const bareCall = explainBareFunctionCall(trimmed, symbolTable, scope);
-  if (bareCall) return bareCall;
-
-  return genericFallbackExplanation();
+function literalRole(node) {
+  if (!node) return null;
+  if (node.type === "dictionary_literal") return "dict";
+  if (node.type === "array_literal") return "list";
+  if (node.type === "line_string_literal" || node.type === "string_literal") return "string";
+  if (node.type === "boolean_literal") return "boolean";
+  if (node.type === "integer_literal" || node.type === "real_literal") return "number";
+  return null;
 }
 
-export function findIssues(lines) {
-  const issues = findCommonIssues(lines);
-  lines.forEach((rawLine, index) => {
-    if (/\bas!\s+\w+/.test(rawLine)) {
-      issues.push({ line: index + 1, type: "warning", message: "Force-cast `as!` will crash if the cast fails. A conditional `as?` is usually safer." });
+// ------------------------------------------------------------
+// Per-function symbol tracking
+// ------------------------------------------------------------
+
+function buildSymbols(scopeNode) {
+  const symbols = new Map();
+  function scan(node) {
+    if (node.type === "property_declaration") {
+      const pattern = node.namedChildren.find((c) => c.type === "pattern" || c.type === "simple_identifier");
+      const value = node.namedChildren[node.namedChildren.length - 1];
+      const role = literalRole(value);
+      if (pattern && role) symbols.set(pattern.text, role);
     }
-    if (/!\s*$/.test(rawLine.trim()) && /^(let|var)\b/.test(rawLine.trim())) {
-      issues.push({ line: index + 1, type: "review", message: "Force-unwrapping an optional here will crash if the value is `nil`." });
+    if (node.type === "for_statement") {
+      const item = node.childForFieldName("item") || node.namedChildren.find((c) => c.type === "simple_identifier");
+      if (item) symbols.set(item.text, "loop-item");
     }
-    if (/\.arguments\s*=/.test(rawLine) && /\+/.test(rawLine)) {
-      issues.push({ line: index + 1, type: "security", message: "Process/task arguments are built with concatenation. If any part comes from user input, this is a command-injection risk." });
+    for (const child of node.namedChildren) scan(child);
+  }
+  if (scopeNode) scan(scopeNode);
+  return symbols;
+}
+
+// ------------------------------------------------------------
+// Per-line explanation
+// ------------------------------------------------------------
+
+function explainNode(node, symbols) {
+  switch (node.type) {
+    case "import_declaration":
+      return "Imports a framework so its types/functions can be used in this file.";
+
+    default:
+      break;
+  }
+
+  if (TYPE_DECL_TYPES.has(node.type)) {
+    const nameNode = node.childForFieldName("name");
+    const name = nameNode ? nameNode.text : "?";
+    return `Defines the ${typeKindLabel(node)} \`${name}\`, which can serve as a blueprint for creating objects.`;
+  }
+
+  switch (node.type) {
+    case "function_declaration": {
+      const nameNode = node.childForFieldName("name");
+      const paramsNode = node.childForFieldName("parameters");
+      const name = nameNode ? nameNode.text : "?";
+      const params = paramsNode ? paramsNode.text.slice(1, -1).trim() : "";
+      return params
+        ? `Defines the function \`${name}\`, which accepts ${mdCode(params)} as parameter(s).`
+        : `Defines the function \`${name}\` without parameters.`;
     }
-  });
-  return issues;
+
+    case "for_statement": {
+      const item = node.childForFieldName("item") || node.namedChildren.find((c) => c.type === "simple_identifier");
+      const collection = node.childForFieldName("collection");
+      const collectionText = collection ? collection.text : "?";
+      const role = collection && collection.type === "simple_identifier" ? symbols.get(collection.text) : null;
+      const phrase = role === "list" ? `the ${mdCode(collectionText)} array` : mdCode(collectionText);
+      return `Iterates over ${phrase}; on each pass, ${mdCode(item ? item.text : "?")} represents the current item.`;
+    }
+
+    case "while_statement":
+      return "Starts a while loop that keeps running while its condition stays true.";
+
+    case "guard_statement": {
+      // "guard let x = expr else { ... }" vs plain "guard cond else { ... }".
+      const bindings = node.namedChildren.filter((c) => c.type === "value_binding_pattern" || c.type === "optional_binding_condition");
+      if (bindings.length) {
+        const binding = bindings[0];
+        const name = binding.namedChildren.find((c) => c.type === "simple_identifier")?.text || "?";
+        const expr = node.namedChildren.find((c) => c !== binding && c.type !== "statements")?.text || "?";
+        return `Unwraps ${mdCode(expr)}; if it's \`nil\`, runs the \`else\` block below (which must exit this function), otherwise makes the value available as \`${name}\` for the rest of the function (Swift's \`guard let\`).`;
+      }
+      const condition = node.namedChildren.find((c) => c.type !== "statements")?.text || "?";
+      return `Checks whether ${mdCode(condition)} is true; if not, runs the \`else\` block below (which must exit this function) — Swift's early-exit \`guard\`.`;
+    }
+
+    case "if_statement": {
+      const bindings = node.namedChildren.filter((c) => c.type === "value_binding_pattern" || c.type === "optional_binding_condition");
+      if (bindings.length) {
+        const binding = bindings[0];
+        const name = binding.namedChildren.find((c) => c.type === "simple_identifier")?.text || "?";
+        const expr = node.namedChildren.find((c) => c !== binding && c.type !== "statements")?.text || "?";
+        return `If ${mdCode(expr)} isn't \`nil\`, unwraps it and makes it available as \`${name}\` inside this block (Swift's optional binding).`;
+      }
+      const isElseIf = node.parent && node.parent.type === "if_statement";
+      const condition = node.namedChildren.find((c) => c.type !== "statements")?.text || "?";
+      if (isElseIf) return `Checks another condition (${mdCode(condition)}) when the previous one was not met.`;
+      const role = symbols.get(condition);
+      if (role === "loop-item") return `Checks whether the current item (${mdCode(condition)}) meets the condition before running the code that follows.`;
+      return `Checks whether ${mdCode(condition)} is true before running the code that follows.`;
+    }
+
+    case "switch_statement":
+      return "Starts a switch statement that picks a branch based on the value.";
+
+    case "do_statement":
+      return "Starts a `try` block; if an error occurs anywhere inside it, execution jumps to the matching `catch` block below.";
+
+    case "catch_block": {
+      const body = node.namedChildren.find((c) => c.type === "statements");
+      if (!body) return "Catches any exception/error thrown in the `try` block above.";
+      return "Catches an exception raised in the `try` block above.";
+    }
+
+    case "control_transfer_statement": {
+      if (!node.text.trim().startsWith("return")) return null; // break/continue/throw: no separate line
+      const value = node.namedChildren[0];
+      return value
+        ? `Returns ${mdCode(value.text)} from the current function.`
+        : "Returns control from the current function.";
+    }
+
+    case "property_declaration": {
+      const patternNode = node.namedChildren.find((c) => c.type === "pattern");
+      const name = patternNode ? patternNode.text : (node.namedChildren.find((c) => c.type === "simple_identifier")?.text || "?");
+      const value = node.namedChildren[node.namedChildren.length - 1];
+      if (!value || value === patternNode) return null;
+      const isLet = /^let\b/.test(node.text.trim());
+      const kind = isLet ? "constant" : "variable";
+
+      const nilCoalesce = value.type === "nil_coalescing_expression" ? value : null;
+      if (nilCoalesce) {
+        const [left, right] = nilCoalesce.namedChildren;
+        return `Declares the ${kind} \`${name}\`: uses ${mdCode(left ? left.text : "?")} if it isn't \`nil\`, otherwise falls back to ${mdCode(right ? right.text : "?")} (Swift's nil-coalescing \`??\`).`;
+      }
+      return `Declares the ${kind} \`${name}\` and assigns it ${mdCode(value.text)}.`;
+    }
+
+    case "call_expression": {
+      const callee = node.childForFieldName("function") || node.namedChildren[0];
+      if (callee && callee.type === "simple_identifier" && callee.text === "print") {
+        const argsNode = node.childForFieldName("call_suffix") || node.namedChildren.find((c) => c.type === "call_suffix");
+        const args = argsNode ? argsNode.text.replace(/^\(|\)$/g, "").trim() : "";
+        return args ? `Prints ${mdCode(args)} to the console.` : "Prints a blank line to the console.";
+      }
+      return null;
+    }
+
+    default:
+      return null;
+  }
+}
+
+// ------------------------------------------------------------
+// Issue checks
+// ------------------------------------------------------------
+
+const SUPERSEDED_MESSAGES = new Set([
+  "This error handler is empty — the exception is silently swallowed. Consider at least logging it, even if no other action is needed.",
+  "This line comes right after a `return` in the same block, so it can never be reached.",
+]);
+
+function checkIssues(node, issues) {
+  if (node.type === "catch_block") {
+    const body = node.namedChildren.find((c) => c.type === "statements");
+    if (!body) {
+      issues.push({
+        line: lineOf(node),
+        type: "review",
+        message: "This error handler is empty — the exception is silently swallowed. Consider at least logging it, even if no other action is needed.",
+      });
+    }
+  }
+
+  if (node.type === "control_transfer_statement" && node.text.trim().startsWith("return")) {
+    const next = node.nextNamedSibling;
+    if (next && next.type !== "comment") {
+      issues.push({
+        line: lineOf(next),
+        type: "warning",
+        message: "This line comes right after a `return` in the same block, so it can never be reached.",
+      });
+    }
+  }
+
+  // Force-cast `as!` — crashes if the cast fails.
+  if (node.type === "as_expression" && /\bas!\s/.test(node.text)) {
+    issues.push({
+      line: lineOf(node),
+      type: "warning",
+      message: "Force-cast `as!` will crash if the cast fails. A conditional `as?` is usually safer.",
+    });
+  }
+
+  // Force-unwrap `!` at the end of a property initializer.
+  if (node.type === "property_declaration" && /!\s*$/.test(node.text.trim())) {
+    issues.push({
+      line: lineOf(node),
+      type: "review",
+      message: "Force-unwrapping an optional here will crash if the value is `nil`.",
+    });
+  }
+
+  if (node.type === "assignment" || node.type === "call_expression") {
+    if (/\.arguments\s*=/.test(node.text) && /\+/.test(node.text)) {
+      issues.push({
+        line: lineOf(node),
+        type: "security",
+        message: "Process/task arguments are built with concatenation. If any part comes from user input, this is a command-injection risk.",
+      });
+    }
+  }
+}
+
+// ------------------------------------------------------------
+// Structure
+// ------------------------------------------------------------
+
+function updateStructure(node, structure) {
+  const lineNumber = lineOf(node);
+
+  if (node.type === "comment" || node.type === "multiline_comment") {
+    structure.comments.push(lineNumber);
+  } else if (node.type === "function_declaration") {
+    const nameNode = node.childForFieldName("name");
+    const paramsNode = node.childForFieldName("parameters");
+    structure.functions.push({ line: lineNumber, name: nameNode ? nameNode.text : "?", parameters: paramsNode ? paramsNode.text.slice(1, -1).trim() : "" });
+  } else if (TYPE_DECL_TYPES.has(node.type)) {
+    const nameNode = node.childForFieldName("name");
+    structure.classes.push({ line: lineNumber, name: nameNode ? nameNode.text : "?" });
+  } else if (node.type === "import_declaration") {
+    structure.imports.push(lineNumber);
+  } else if (node.type === "property_declaration") {
+    const patternNode = node.namedChildren.find((c) => c.type === "pattern") || node.namedChildren.find((c) => c.type === "simple_identifier");
+    if (patternNode) structure.variables.push({ line: lineNumber, name: patternNode.text });
+  } else if (node.type === "for_statement" || node.type === "while_statement") {
+    structure.loops.push(lineNumber);
+  } else if (node.type === "if_statement" || node.type === "switch_statement" || node.type === "guard_statement") {
+    structure.conditionals.push(lineNumber);
+  } else if (node.type === "control_transfer_statement" && node.text.trim().startsWith("return")) {
+    structure.returns.push(lineNumber);
+  } else if (node.type === "call_expression") {
+    const callee = node.childForFieldName("function") || node.namedChildren[0];
+    if (callee && callee.text === "print") structure.outputs.push(lineNumber);
+  }
+}
+
+// ------------------------------------------------------------
+// Single entry point
+// ------------------------------------------------------------
+
+export async function analyzeAst(code) {
+  await ensureReady();
+
+  const parser = new Parser();
+  parser.setLanguage(SwiftLang);
+  const tree = parser.parse(code);
+  const root = tree.rootNode;
+
+  const structure = {
+    functions: [], classes: [], imports: [], variables: [],
+    loops: [], conditionals: [], returns: [], outputs: [], comments: [],
+  };
+  const issues = findCommonIssues(code.split("\n")).filter((issue) => !SUPERSEDED_MESSAGES.has(issue.message));
+  const lineExplanations = [];
+
+  function walk(node, symbols) {
+    updateStructure(node, structure);
+    checkIssues(node, issues);
+
+    if (node.type === "function_declaration") {
+      const explanation = explainNode(node, symbols);
+      if (explanation) lineExplanations.push({ line: lineOf(node), text: explanation });
+      const body = node.childForFieldName("body");
+      const localSymbols = buildSymbols(body);
+      for (const child of node.namedChildren) walk(child, localSymbols);
+      return;
+    }
+
+    const explanation = explainNode(node, symbols);
+    if (explanation) lineExplanations.push({ line: lineOf(node), text: explanation });
+
+    for (const child of node.namedChildren) walk(child, symbols);
+  }
+
+  walk(root, buildSymbols(root));
+
+  lineExplanations.sort((a, b) => a.line - b.line);
+
+  return { structure, issues, lineExplanations };
 }
