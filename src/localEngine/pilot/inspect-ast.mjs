@@ -139,3 +139,39 @@ func f() {
 }
 `
 );
+
+// ------------------------------------------------------------
+// SQL — the last remaining regex-based analyzer (src/localEngine/
+// analyzers/sql.js). Unlike Kotlin/Swift/Bash, there is NO prior pilot
+// work for SQL at all: it's unconfirmed whether tree-sitter-wasms even
+// bundles a SQL grammar, so this is wrapped in a try/catch rather than
+// assumed to exist. If it fails, that answers the "can we even do
+// this" question before any production code gets written against
+// node types that were never verified to exist.
+try {
+  await inspectLanguage(
+    "SQL",
+    `${wasmDir}/tree-sitter-sql.wasm`,
+    `-- fetch each customer's order total
+WITH order_totals AS (
+    SELECT customer_id, SUM(amount) AS total
+    FROM orders
+    GROUP BY customer_id
+    HAVING SUM(amount) > 0
+)
+SELECT c.name, o.total
+FROM customers c
+LEFT JOIN order_totals o ON c.id = o.customer_id
+WHERE c.active = 1
+ORDER BY o.total DESC;
+
+INSERT INTO logs (message) VALUES ('done');
+
+UPDATE customers SET active = 0 WHERE id = 5;
+`
+  );
+} catch (err) {
+  console.log("\n\n########## SQL — FAILED TO LOAD ##########");
+  console.log("No tree-sitter-sql.wasm found (or it failed to parse) — message:", err && err.message);
+  console.log("This means SQL either needs a different package/grammar name, or can't be migrated the same way as the other languages.");
+}
