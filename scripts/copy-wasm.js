@@ -1,8 +1,8 @@
 // Copies the .wasm files the Tree-sitter-based local-engine
 // analyzers (Python, JavaScript, TypeScript, PHP, Java, C#, C, C++,
-// and more to follow) need at runtime from node_modules into
-// public/wasm/, so Vite serves them as static assets (reachable at
-// /wasm/... in the browser). Runs automatically as a postinstall
+// Go, Rust, and more to follow) need at runtime from node_modules
+// into public/wasm/, so Vite serves them as static assets (reachable
+// at /wasm/... in the browser). Runs automatically as a postinstall
 // step — no manual copying needed after `npm install`.
 //
 // If either source file is missing (e.g. a package's internal
@@ -59,6 +59,16 @@ const copies = [
     from: "node_modules/tree-sitter-wasms/out/tree-sitter-cpp.wasm",
     to: "public/wasm/tree-sitter-cpp.wasm",
     note: "C++ grammar",
+  },
+  {
+    from: "node_modules/tree-sitter-wasms/out/tree-sitter-go.wasm",
+    to: "public/wasm/tree-sitter-go.wasm",
+    note: "Go grammar",
+  },
+  {
+    from: "node_modules/tree-sitter-wasms/out/tree-sitter-rust.wasm",
+    to: "public/wasm/tree-sitter-rust.wasm",
+    note: "Rust grammar",
   },
 ];
 
