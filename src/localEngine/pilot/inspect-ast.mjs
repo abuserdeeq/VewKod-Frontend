@@ -1,10 +1,20 @@
 // Run: node src/localEngine/pilot/inspect-ast.mjs
 //
 // Reusable diagnostic: parses a sample with any language grammar and
-// prints every distinct node type it finds, plus (for function-like
-// and class-like nodes) their actual field names. Use this instead
-// of guessing node type names for a new language — it's much faster
-// than a debug-fix-rerun loop per guess.
+// prints every distinct node type it finds, plus (for function-like,
+// class-like, catch/return, loop, conditional, declaration, and call
+// nodes) their actual field names and named-children types. Use this
+// instead of guessing node type names for a new language — it's much
+// faster than a debug-fix-rerun loop per guess.
+//
+// Kotlin and Swift samples below were extended when kotlin.js/swift.js
+// graduated from pilot/ to analyzers/ (Sept 2026) — that migration was
+// done WITHOUT the ability to run this script (no network access to
+// npm-install web-tree-sitter/tree-sitter-wasms in that session), so
+// several node-type names in the new analyzers are unverified guesses,
+// flagged inline there. Run this first and compare against those
+// analyzers' `case "..."` labels and `.find((c) => c.type === "...")`
+// checks before trusting them in production.
 
 import Parser from "web-tree-sitter";
 
@@ -23,10 +33,7 @@ async function inspectLanguage(label, wasmPath, sourceCode) {
   function walk(node) {
     allTypes.add(node.type);
 
-    // For any node whose name suggests it's function/class/catch/
-    // return-related, print its field names and children types so
-    // the right field/child to read is obvious.
-    if (/function|method|class|catch|return|jump|control_transfer/i.test(node.type)) {
+    if (/function|method|class|struct|enum|protocol|catch|return|jump|control_transfer|property|variable|declaration|for|while|if|guard|when|switch|call|import/i.test(node.type)) {
       if (!fieldsByType[node.type]) {
         const childInfo = node.namedChildren.map((c) => c.type);
         fieldsByType[node.type] = childInfo;
@@ -50,7 +57,11 @@ const wasmDir = "./node_modules/tree-sitter-wasms/out";
 await inspectLanguage(
   "KOTLIN",
   `${wasmDir}/tree-sitter-kotlin.wasm`,
-  `fun calculateFee(amount: Double, count: Int): Double {
+  `import kotlin.math.max
+
+data class Order(val id: String, val amount: Double)
+
+fun calculateFee(amount: Double, count: Int): Double {
     if (count > 0) {
         return amount / count
         println("This will never run")
@@ -62,8 +73,23 @@ fun processOrder(order: Order): Boolean {
     try {
         return chargeCard(order)
     } catch (e: Exception) {
+    } finally {
+        println("done")
     }
     return false
+}
+
+fun printAll(items: List<String>) {
+    for (item in items) {
+        println(item)
+    }
+    var total = 0
+    total += 1
+    val risky = total!!
+    when (total) {
+        0 -> println("zero")
+        else -> println("nonzero")
+    }
 }
 `
 );
@@ -71,7 +97,13 @@ fun processOrder(order: Order): Boolean {
 await inspectLanguage(
   "SWIFT",
   `${wasmDir}/tree-sitter-swift.wasm`,
-  `func calculateFee(amount: Double, count: Int) -> Double {
+  `import Foundation
+
+struct Order {
+    let id: String
+}
+
+func calculateFee(amount: Double, count: Int) -> Double {
     if count > 0 {
         return amount / Double(count)
         print("This will never run")
@@ -83,6 +115,26 @@ func processOrder(order: Order) -> Bool {
     do {
         return try chargeCard(order)
     } catch {
+    }
+}
+
+func find(id: String) -> Order? { return nil }
+
+func f() {
+    guard let record = find(id: "1") else {
+        return
+    }
+    if let name = record.id as String? {
+        print(name)
+    }
+    let age = record.id.count ?? 0
+    let forced = record.id as! String
+    for item in [1, 2, 3] {
+        print(item)
+    }
+    switch age {
+    case 0: print("zero")
+    default: print("nonzero")
     }
 }
 `
