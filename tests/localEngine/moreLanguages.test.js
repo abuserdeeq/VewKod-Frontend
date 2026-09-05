@@ -42,6 +42,33 @@ test("Swift: guard let, if let, and nil-coalescing all get real explanations", a
   assert.match(out, /Swift's `guard let`/);
   assert.match(out, /Swift's optional binding/);
   assert.match(out, /nil-coalescing `\?\?`/);
+  // Regression guard for a real bug: the bound name is a SIBLING of
+  // value_binding_pattern in the AST, not nested inside it, so a naive
+  // lookup silently fell back to "?" here while still matching the
+  // three loose assertions above (the template phrase appears either
+  // way). Pin down the actual unwrapped name/expression too.
+  assert.match(out, /Unwraps `find\(id\)`/);
+  assert.match(out, /makes it available as `record`/);
+  assert.match(out, /unwraps it and makes it available as `name`/);
+  assert.match(out, /If `user\?\.name` isn't `nil`/);
+  assert.doesNotMatch(out, /as `\?`/);
+  assert.doesNotMatch(out, /Unwraps `\?`/);
+});
+
+test("Kotlin: for-loop names the actual iterable, not the loop variable twice", async () => {
+  const out = lineByLine(await generateLocalExplanation(
+    'fun run() {\n    for (item in items) {\n        println(item)\n    }\n}',
+    "kotlin"
+  ));
+  // Regression guard for a real bug: for_statement's children are
+  // [variable_declaration, simple_identifier, control_structure_body]
+  // and the old code excluded the loop-var slot by node identity
+  // (`c !== varNode`), which silently never matches with
+  // web-tree-sitter — so `iterable` fell back to the FIRST child
+  // (variable_declaration, i.e. the loop variable itself) instead of
+  // the actual iterable.
+  assert.match(out, /Iterates over `items`/);
+  assert.doesNotMatch(out, /Iterates over `item`;/);
 });
 
 test("C#: a nullable return type (`User?`) is recognized as a method definition", async () => {
