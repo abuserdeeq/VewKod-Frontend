@@ -1,3 +1,25 @@
+// ============================================================
+// SQL analyzer — Regex/indentation based (PERMANENT EXCEPTION)
+// ============================================================
+// Every other language in src/localEngine/analyzers/ has graduated
+// to a Tree-sitter/AST-based analyzeAst() (see e.g. bash.js,
+// python.js). SQL is the one deliberate, permanent exception:
+//
+// tree-sitter-wasms@0.1.11 (the package all other analyzers pull
+// their grammar .wasm from) does not ship a SQL grammar at all.
+// Confirmed directly: running the pilot inspection script against
+// `./node_modules/tree-sitter-wasms/out/tree-sitter-sql.wasm`
+// failed with ENOENT — the file simply isn't in the package.
+//
+// Getting SQL onto Tree-sitter would mean sourcing or building a
+// grammar .wasm from an entirely different place (e.g. compiling
+// tree-sitter-sql from source via emscripten), which is a separate,
+// much larger undertaking with its own risks — not a drop-in swap
+// like the other languages got. Decision (2026-09): not worth it:
+// SQL stays on this regex/indentation analyzer indefinitely. If
+// that decision is ever revisited, re-run the same ENOENT check
+// first before writing any analyzeAst() code against guessed node
+// types.
 import { genericFallbackExplanation, findCommonIssues } from "../shared/patterns.js";
 
 export const id = "sql";
