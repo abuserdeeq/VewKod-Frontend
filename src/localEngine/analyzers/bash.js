@@ -74,6 +74,15 @@ function isReturnCommand(node) {
 // and the name is just the first named child. commandName() and
 // commandArgs() must resolve the name node the same way, or the name
 // ends up double-counted as one of its own arguments.
+// web-tree-sitter does not guarantee the same JS object identity
+// across two separate accessor calls (e.g. childForFieldName() vs.
+// namedChildren) even when they point at the exact same underlying
+// node — so comparing nodes with `!==` can silently fail to match.
+// Compare by source position instead, which is stable.
+function sameNode(a, b) {
+  return !!a && !!b && a.startIndex === b.startIndex && a.endIndex === b.endIndex;
+}
+
 function commandNameNode(node) {
   return node.childForFieldName("name") || node.namedChildren[0];
 }
@@ -86,7 +95,7 @@ function commandName(node) {
 function commandArgs(node) {
   const nameNode = commandNameNode(node);
   return node.namedChildren
-    .filter((c) => c !== nameNode)
+    .filter((c) => !sameNode(c, nameNode))
     .map((c) => c.text)
     .join(" ")
     .trim();
@@ -144,7 +153,7 @@ function explainNode(node, symbols) {
       // named child besides the loop variable and the do-group body.
       const body = node.childForFieldName("body");
       const items = node.namedChildren
-        .filter((c) => c !== varNode && c !== body)
+        .filter((c) => !sameNode(c, varNode) && !sameNode(c, body))
         .map((c) => c.text)
         .join(" ");
       return `Iterates over \`${items}\`; on each pass, \`${varNode ? varNode.text : "?"}\` represents the current item.`;
