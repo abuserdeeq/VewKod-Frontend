@@ -7,14 +7,23 @@
 // instead of guessing node type names for a new language — it's much
 // faster than a debug-fix-rerun loop per guess.
 //
-// Kotlin and Swift samples below were extended when kotlin.js/swift.js
-// graduated from pilot/ to analyzers/ (Sept 2026) — that migration was
-// done WITHOUT the ability to run this script (no network access to
-// npm-install web-tree-sitter/tree-sitter-wasms in that session), so
-// several node-type names in the new analyzers are unverified guesses,
-// flagged inline there. Run this first and compare against those
-// analyzers' `case "..."` labels and `.find((c) => c.type === "...")`
-// checks before trusting them in production.
+// STATUS (Sept 2026): every language analyzer under analyzers/ has
+// graduated onto Tree-sitter except SQL, which stays on the old
+// regex/indentation analyzer permanently — tree-sitter-wasms@0.1.11
+// doesn't ship a SQL grammar at all (confirmed: loading
+// tree-sitter-sql.wasm fails with ENOENT), so there is nothing left
+// to inspect there. See the header comment in analyzers/sql.js.
+//
+// What's still open: kotlin.js and swift.js each have inline
+// "CONFIDENCE NOTES" flagging specific node shapes that were
+// extrapolated from grammar docs rather than actually confirmed
+// (Kotlin: property_declaration, when_expression, call_expression
+// shape, import_header. Swift: struct/enum/protocol/extension
+// declarations, guard/if-let, nil-coalescing, force-unwrap) — that
+// migration was done without the ability to run this script (no
+// network access in that session). Run this first and compare
+// against those analyzers' `case "..."` labels and
+// `.find((c) => c.type === "...")` checks before fully trusting them.
 
 import Parser from "web-tree-sitter";
 
@@ -139,39 +148,3 @@ func f() {
 }
 `
 );
-
-// ------------------------------------------------------------
-// SQL — the last remaining regex-based analyzer (src/localEngine/
-// analyzers/sql.js). Unlike Kotlin/Swift/Bash, there is NO prior pilot
-// work for SQL at all: it's unconfirmed whether tree-sitter-wasms even
-// bundles a SQL grammar, so this is wrapped in a try/catch rather than
-// assumed to exist. If it fails, that answers the "can we even do
-// this" question before any production code gets written against
-// node types that were never verified to exist.
-try {
-  await inspectLanguage(
-    "SQL",
-    `${wasmDir}/tree-sitter-sql.wasm`,
-    `-- fetch each customer's order total
-WITH order_totals AS (
-    SELECT customer_id, SUM(amount) AS total
-    FROM orders
-    GROUP BY customer_id
-    HAVING SUM(amount) > 0
-)
-SELECT c.name, o.total
-FROM customers c
-LEFT JOIN order_totals o ON c.id = o.customer_id
-WHERE c.active = 1
-ORDER BY o.total DESC;
-
-INSERT INTO logs (message) VALUES ('done');
-
-UPDATE customers SET active = 0 WHERE id = 5;
-`
-  );
-} catch (err) {
-  console.log("\n\n########## SQL — FAILED TO LOAD ##########");
-  console.log("No tree-sitter-sql.wasm found (or it failed to parse) — message:", err && err.message);
-  console.log("This means SQL either needs a different package/grammar name, or can't be migrated the same way as the other languages.");
-}
