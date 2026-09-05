@@ -175,10 +175,11 @@ export async function generateLocalExplanation(code, language) {
   let structure, issues, lineByLineSection;
 
   if (typeof analyzer.analyzeAst === "function") {
-    // AST-based analyzer (currently: Python only). One parse
-    // produces structure/issues/line-explanations together — no
-    // separate symbol-table or line-scoping step, since the AST
-    // already knows real scope boundaries with certainty.
+    // AST-based analyzer (every language except SQL — see the "else"
+    // branch below). One parse produces structure/issues/line-
+    // explanations together — no separate symbol-table or line-
+    // scoping step, since the AST already knows real scope
+    // boundaries with certainty.
     const result = await analyzer.analyzeAst(code);
     structure = result.structure;
     issues = result.issues;
@@ -194,8 +195,10 @@ export async function generateLocalExplanation(code, language) {
     }
     lineByLineSection += `\n`;
   } else {
-    // Regex/indentation-based analyzer — every other language, for
-    // now, until each is ported the same way Python was.
+    // Regex/indentation-based analyzer. SQL (analyzers/sql.js) is the
+    // one permanent exception here — see the header comment in that
+    // file for why it stays on this path instead of Tree-sitter.
+    // Every other language has graduated to analyzeAst() above.
     const lineScopes = computeLineScopes(lines, analyzer.scopeStyle || "none", analyzer.functionStartRegex || null);
 
     const symbolTable = createSymbolTable();
