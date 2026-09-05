@@ -6,21 +6,27 @@
 // indentation-based analyzer entirely (no dual maintenance) and
 // folds in what was pilot/kotlinTreeSitter.js.
 //
-// CONFIDENCE NOTES (carried over + extended from the pilot):
+// CONFIDENCE NOTES (updated after running inspect-ast.mjs for real):
 // Kotlin's tree-sitter grammar (fwcd/tree-sitter-kotlin) is
 // community-maintained and exposes far fewer named fields than
 // Java's/C#'s official grammars — most nodes are read by scanning
-// namedChildren for a type rather than childForFieldName(). Verified
-// via inspect-ast.mjs during the pilot round: function_declaration's
-// name is a bare simple_identifier child (no "name" field);
-// class_declaration's name is simple_identifier or type_identifier;
-// an empty catch_block has no "statements" child at all. Everything
-// else below (property_declaration, when_expression, call_expression
-// shape, import_header) is a reasonable-but-unverified extrapolation
-// from that same grammar's public docs — run
-// `node src/localEngine/pilot/inspect-ast.mjs` after `npm install`
-// to confirm before trusting this in production, per the project's
-// established pattern for new-language pilots.
+// namedChildren for a type rather than childForFieldName(). CONFIRMED:
+// function_declaration's name is a bare simple_identifier child (no
+// "name" field); class_declaration's name is simple_identifier or
+// type_identifier; an empty catch_block has no "statements" child at
+// all; property_declaration wraps [variable_declaration, <initializer>]
+// with the initializer as a sibling, not nested; catch_block is
+// [simple_identifier, user_type] for a typed catch. Two bugs were found
+// and fixed from this real output: for_statement's iterable lookup and
+// if_expression's else-if detection both used node `!==`/`===` to
+// exclude an already-found node — see sameNode()'s comment for why that
+// silently fails with web-tree-sitter. Still an unverified extrapolation:
+// when_expression/call_expression's exact shape beyond what's used here,
+// and the "assignment" node's structure (inspect-ast.mjs didn't capture
+// it — its type-matching regex doesn't include "assignment"). Re-run
+// the pilot workflow and widen that regex before trusting compound-
+// assignment output (`total += 1`) beyond what's already covered by
+// tests/localEngine/.
 
 import Parser from "web-tree-sitter";
 import { findCommonIssues, mdCode } from "../shared/patterns.js";
@@ -55,6 +61,16 @@ async function ensureReady() {
 
 function lineOf(node) {
   return node.startPosition.row + 1;
+}
+
+// web-tree-sitter does not guarantee the same JS object identity
+// across two separate accessor calls (e.g. two calls to
+// namedChildren) even when they point at the exact same underlying
+// node — confirmed the hard way via a CI failure in bash.js. Compare
+// by source position instead of `===`/`!==` wherever a node found
+// earlier needs to be excluded/matched later.
+function sameNode(a, b) {
+  return !!a && !!b && a.startIndex === b.startIndex && a.endIndex === b.endIndex;
 }
 
 // Kotlin's grammar rarely tags a "name" field — find the first
@@ -149,7 +165,15 @@ function explainNode(node, symbols) {
       const loopVar = varNode && varNode.type === "variable_declaration"
         ? varNode.namedChildren.find((c) => c.type === "simple_identifier")
         : varNode;
-      const iterable = node.namedChildren.find((c) => c !== varNode && c.type !== "control_structure_body");
+      // CONFIRMED via inspect-ast.mjs: `for (item in items)` gives
+      // for_statement children = [variable_declaration, simple_identifier,
+      // control_structure_body] — the loop variable AND the iterable can
+      // both be type "simple_identifier" (varNode picks the wrapped one
+      // inside variable_declaration; the iterable is the OTHER, bare one).
+      // Excluding by type name (not node identity — see sameNode's
+      // comment) correctly leaves the iterable regardless of which shape
+      // it is, since it's whatever isn't the loop-var slot or the body.
+      const iterable = node.namedChildren.find((c) => c.type !== "variable_declaration" && c.type !== "control_structure_body");
       const iterableText = iterable ? iterable.text : "?";
       const role = iterable && iterable.type === "simple_identifier" ? symbols.get(iterable.text) : null;
       const phrase = role === "list" ? `the ${mdCode(iterableText)} list` : mdCode(iterableText);
@@ -163,7 +187,8 @@ function explainNode(node, symbols) {
       // Kotlin has no dedicated "else if" node — an else-branch that
       // is itself another if_expression is how chained conditions
       // appear in the tree.
-      const isElseIf = node.parent && node.parent.type === "if_expression" && node.parent.namedChildren[node.parent.namedChildren.length - 1] === node;
+      const parentChildren = node.parent ? node.parent.namedChildren : [];
+      const isElseIf = node.parent && node.parent.type === "if_expression" && parentChildren.length > 0 && sameNode(parentChildren[parentChildren.length - 1], node);
       const condition = node.namedChildren.find((c) => c.type !== "control_structure_body")?.text || "?";
       return isElseIf
         ? `Checks another condition (${mdCode(condition)}) when the previous one was not met.`

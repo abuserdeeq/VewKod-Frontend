@@ -6,17 +6,33 @@
 // indentation-based analyzer entirely and folds in what was
 // pilot/swiftTreeSitter.js.
 //
-// CONFIDENCE NOTES (carried over + extended from the pilot):
-// alex-pinkus/tree-sitter-swift is more field-annotated than
-// Kotlin's grammar — the pilot's function_declaration/
-// class_declaration name lookups used childForFieldName("name")
-// directly and worked, and an empty catch_block's only named child
-// is catch_keyword (confirmed via inspect-ast.mjs). Struct/enum/
-// protocol/extension declarations, guard/if-let optional binding,
-// nil-coalescing, and force-unwrap below are unverified
-// extrapolations from the grammar's public docs — run
-// `node src/localEngine/pilot/inspect-ast.mjs` after `npm install`
-// to confirm before trusting this in production.
+// CONFIDENCE NOTES (updated after running inspect-ast.mjs for real):
+// alex-pinkus/tree-sitter-swift is more field-annotated than Kotlin's
+// grammar — function_declaration/class_declaration name lookups use
+// childForFieldName("name") directly and worked, and an empty
+// catch_block's only named child is catch_keyword (confirmed). NEW:
+// `struct Order { ... }` produces a plain "class_declaration" node —
+// there is no separate struct_declaration/enum_declaration/
+// protocol_declaration type in this grammar at all (none appeared
+// anywhere in a full AST node-type dump), so TYPE_DECL_TYPES already
+// covers structs via "class_declaration" without needing those other
+// entries; they're harmless no-ops kept in case a future grammar
+// version does split them out. NEW: `guard let x = expr else {}` had a
+// real bug here — the bound name is a SIBLING of value_binding_pattern
+// in guard_statement's children, not nested inside it, so the old code
+// (which looked inside the binding node) always fell back to "?"; fixed,
+// and the same fix was applied to `if let` by analogy since
+// inspect-ast.mjs only records a node type's shape on first encounter
+// per run (the plain `if count > 0` sample was hit first, so `if let`
+// itself wasn't independently re-confirmed this round). NEW: for_statement's
+// loop variable is type "pattern", not "simple_identifier" — widened the
+// fallback. Two more bugs (guard/if-let's and Kotlin's for-loop/else-if)
+// came from the same root cause: comparing tree-sitter nodes with
+// `!==`/`===` across separate accessor calls doesn't reliably work — see
+// bash.js and kotlin.js's sameNode() for the full explanation. Still
+// unverified: enum/protocol/extension declarations specifically (no
+// sample included one this round — presumed to also fold into
+// "class_declaration" like struct did, but not independently seen).
 
 import Parser from "web-tree-sitter";
 import { findCommonIssues, mdCode } from "../shared/patterns.js";
@@ -105,7 +121,7 @@ function buildSymbols(scopeNode) {
       if (pattern && role) symbols.set(pattern.text, role);
     }
     if (node.type === "for_statement") {
-      const item = node.childForFieldName("item") || node.namedChildren.find((c) => c.type === "simple_identifier");
+      const item = node.childForFieldName("item") || node.namedChildren.find((c) => c.type === "pattern" || c.type === "simple_identifier");
       if (item) symbols.set(item.text, "loop-item");
     }
     for (const child of node.namedChildren) scan(child);
@@ -145,8 +161,15 @@ function explainNode(node, symbols) {
     }
 
     case "for_statement": {
-      const item = node.childForFieldName("item") || node.namedChildren.find((c) => c.type === "simple_identifier");
-      const collection = node.childForFieldName("collection");
+      // CONFIRMED via inspect-ast.mjs: `for item in [1, 2, 3]` gives
+      // for_statement children = [pattern, array_literal, statements] —
+      // notably the loop variable is type "pattern", not
+      // "simple_identifier". childForFieldName is tried first (Swift's
+      // grammar is more field-annotated than Kotlin's), with a
+      // type-based fallback widened to match what was actually observed
+      // instead of a type name that never appeared in this shape.
+      const item = node.childForFieldName("item") || node.namedChildren.find((c) => c.type === "pattern" || c.type === "simple_identifier");
+      const collection = node.childForFieldName("collection") || node.namedChildren.find((c) => c.type !== "pattern" && c.type !== "simple_identifier" && c.type !== "statements");
       const collectionText = collection ? collection.text : "?";
       const role = collection && collection.type === "simple_identifier" ? symbols.get(collection.text) : null;
       const phrase = role === "list" ? `the ${mdCode(collectionText)} array` : mdCode(collectionText);
@@ -158,23 +181,35 @@ function explainNode(node, symbols) {
 
     case "guard_statement": {
       // "guard let x = expr else { ... }" vs plain "guard cond else { ... }".
-      const bindings = node.namedChildren.filter((c) => c.type === "value_binding_pattern" || c.type === "optional_binding_condition");
-      if (bindings.length) {
-        const binding = bindings[0];
-        const name = binding.namedChildren.find((c) => c.type === "simple_identifier")?.text || "?";
-        const expr = node.namedChildren.find((c) => c !== binding && c.type !== "statements")?.text || "?";
+      // CONFIRMED via inspect-ast.mjs: `guard let record = find(...) else {}`
+      // gives guard_statement children = [value_binding_pattern,
+      // simple_identifier, call_expression, else, statements] — the bound
+      // name (`record`) is a SIBLING of value_binding_pattern, not nested
+      // inside it. The original code drilled into
+      // `binding.namedChildren` looking for the name, which this shape
+      // shows is the wrong place — it would have always fallen back to
+      // "?". Fixed to read the name and expression directly off
+      // guard_statement's own children instead.
+      const hasBinding = node.namedChildren.some((c) => c.type === "value_binding_pattern" || c.type === "optional_binding_condition");
+      if (hasBinding) {
+        const name = node.namedChildren.find((c) => c.type === "simple_identifier")?.text || "?";
+        const expr = node.namedChildren.find((c) => c.type !== "value_binding_pattern" && c.type !== "optional_binding_condition" && c.type !== "simple_identifier" && c.type !== "else" && c.type !== "statements")?.text || "?";
         return `Unwraps ${mdCode(expr)}; if it's \`nil\`, runs the \`else\` block below (which must exit this function), otherwise makes the value available as \`${name}\` for the rest of the function (Swift's \`guard let\`).`;
       }
-      const condition = node.namedChildren.find((c) => c.type !== "statements")?.text || "?";
+      const condition = node.namedChildren.find((c) => c.type !== "else" && c.type !== "statements")?.text || "?";
       return `Checks whether ${mdCode(condition)} is true; if not, runs the \`else\` block below (which must exit this function) — Swift's early-exit \`guard\`.`;
     }
 
     case "if_statement": {
-      const bindings = node.namedChildren.filter((c) => c.type === "value_binding_pattern" || c.type === "optional_binding_condition");
-      if (bindings.length) {
-        const binding = bindings[0];
-        const name = binding.namedChildren.find((c) => c.type === "simple_identifier")?.text || "?";
-        const expr = node.namedChildren.find((c) => c !== binding && c.type !== "statements")?.text || "?";
+      // Same shape as guard_statement above (same fix, applied by
+      // analogy — this specific `if let` variant wasn't independently
+      // re-confirmed because inspect-ast.mjs only records a node
+      // type's shape on its FIRST encounter per run, and the plain
+      // `if count > 0` sample was hit first).
+      const hasBinding = node.namedChildren.some((c) => c.type === "value_binding_pattern" || c.type === "optional_binding_condition");
+      if (hasBinding) {
+        const name = node.namedChildren.find((c) => c.type === "simple_identifier")?.text || "?";
+        const expr = node.namedChildren.find((c) => c.type !== "value_binding_pattern" && c.type !== "optional_binding_condition" && c.type !== "simple_identifier" && c.type !== "statements")?.text || "?";
         return `If ${mdCode(expr)} isn't \`nil\`, unwraps it and makes it available as \`${name}\` inside this block (Swift's optional binding).`;
       }
       const isElseIf = node.parent && node.parent.type === "if_statement";
