@@ -48,7 +48,7 @@ test("Swift: guard let, if let, and nil-coalescing all get real explanations", a
   // three loose assertions above (the template phrase appears either
   // way). Pin down the actual unwrapped name/expression too.
   assert.match(out, /Unwraps `find\(id\)`/);
-  assert.match(out, /makes it available as `record`/);
+  assert.match(out, /makes the value available as `record`/);
   assert.match(out, /unwraps it and makes it available as `name`/);
   assert.match(out, /If `user\?\.name` isn't `nil`/);
   assert.doesNotMatch(out, /as `\?`/);
